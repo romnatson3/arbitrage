@@ -1,0 +1,9 @@
+env/
+__pycache__/
+local.sh
+/static/
+readme.txt
+celerybeat-schedule
+media/
+.vimspector.json
+.vimspector.session

@@ -1,0 +1,177 @@
+services:
+######################## admin
+  trade:
+    image: trade:latest
+    deploy:
+      mode: replicated
+      replicas: 1
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: /app/wait-for-it.sh -q -s -h postgres -p 5432 -- /app/entrypoint.sh
+    restart: always
+    volumes:
+      - trade_static:/app/static
+    networks:
+      - layer
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+      - redis
+    logging:
+      driver: syslog
+      options:
+        tag: trade_web
+        syslog-facility: local7
+######################## nginx
+  nginx:
+    image: nginx:latest
+    restart: always
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - trade_static:/app/static:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - trade
+    networks:
+      - layer
+    logging:
+      driver: syslog
+      options:
+        tag: trade_nginx
+        syslog-facility: local7
+######################## postgres
+  postgres:
+    image: postgres:latest
+    env_file:
+      - .env
+    volumes:
+      - trade_postgres:/var/lib/postgresql/data
+    logging:
+      driver: syslog
+      options:
+        tag: trade_postgres
+        syslog-facility: local7
+    networks:
+      - layer
+######################## redis
+  redis:
+    image: redis:latest
+    entrypoint: redis-server --appendonly yes --maxmemory-policy volatile-ttl --aof-use-rdb-preamble yes --save "" --maxclients 65000
+    volumes:
+      - trade_redis:/data
+    logging:
+      driver: syslog
+      options:
+        tag: trade_redis
+        syslog-facility: local7
+    networks:
+      - layer
+######################## flower
+  flower:
+    image: trade:latest
+    entrypoint: celery -A trade flower -l INFO --host=0.0.0.0 --port=5555
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "51452:5555"
+    depends_on:
+      - redis
+    networks:
+      - layer
+######################## beat scheduler
+  beat:
+    image: trade:latest
+    entrypoint: sh -c "sleep 5 && celery -A trade beat -l INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler"
+    deploy:
+      mode: replicated
+      replicas: 1
+    restart: always
+    depends_on:
+      - redis
+      - postgres
+      - bybit
+      - bybit_strategy
+      - default
+    env_file:
+      - .env
+    networks:
+      - layer
+    logging:
+      driver: syslog
+      options:
+        tag: trade_scheduler
+        syslog-facility: local7
+######################## queue default
+  default:
+    image: trade:latest
+    entrypoint: celery -A trade worker -c 2 -l INFO -Q default
+    deploy:
+      mode: replicated
+      replicas: 1
+    restart: always
+    depends_on:
+      - redis
+      - postgres
+    env_file:
+      - .env
+    networks:
+      - layer
+    logging:
+      driver: syslog
+      options:
+        tag: trade_default
+        syslog-facility: local7
+######################## queue bybit
+  bybit:
+    image: trade:latest
+    entrypoint: celery -A trade worker -c 15 -l INFO -Q bybit
+    deploy:
+      mode: replicated
+      replicas: 1
+    restart: always
+    depends_on:
+      - redis
+      - postgres
+    env_file:
+      - .env
+    networks:
+      - layer
+    logging:
+      driver: syslog
+      options:
+        tag: trade_bybit
+        syslog-facility: local7
+######################## queue bybit_strategy
+  bybit_strategy:
+    image: trade:latest
+    entrypoint: celery -A trade worker -c 15 -l INFO -Q bybit_strategy
+    deploy:
+      mode: replicated
+      replicas: 2
+    restart: always
+    depends_on:
+      - redis
+      - postgres
+      - bybit
+    env_file:
+      - .env
+    networks:
+      - layer
+    logging:
+      driver: syslog
+      options:
+        tag: trade_bybit_strategy
+        syslog-facility: local7
+
+volumes:
+  trade_postgres:
+  trade_redis:
+  trade_static:
+
+networks:
+  layer:
+    driver: bridge
