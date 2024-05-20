@@ -1,7 +1,7 @@
 services:
 ######################## admin
-  trade:
-    image: trade:latest
+  exchange:
+    image: exchange:latest
     deploy:
       mode: replicated
       replicas: 1
@@ -11,7 +11,7 @@ services:
     entrypoint: /app/wait-for-it.sh -q -s -h postgres -p 5432 -- /app/entrypoint.sh
     restart: always
     volumes:
-      - trade_static:/app/static
+      - exchange_static:/app/static
     networks:
       - layer
     env_file:
@@ -22,7 +22,7 @@ services:
     logging:
       driver: syslog
       options:
-        tag: trade_web
+        tag: exchange_web
         syslog-facility: local7
 ######################## nginx
   nginx:
@@ -30,17 +30,17 @@ services:
     restart: always
     volumes:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
-      - trade_static:/app/static:ro
+      - exchange_static:/app/static:ro
     ports:
       - "80:80"
     depends_on:
-      - trade
+      - exchange
     networks:
       - layer
     logging:
       driver: syslog
       options:
-        tag: trade_nginx
+        tag: exchange_nginx
         syslog-facility: local7
 ######################## postgres
   postgres:
@@ -48,11 +48,11 @@ services:
     env_file:
       - .env
     volumes:
-      - trade_postgres:/var/lib/postgresql/data
+      - exchange_postgres:/var/lib/postgresql/data
     logging:
       driver: syslog
       options:
-        tag: trade_postgres
+        tag: exchange_postgres
         syslog-facility: local7
     networks:
       - layer
@@ -61,18 +61,18 @@ services:
     image: redis:latest
     entrypoint: redis-server --appendonly yes --maxmemory-policy volatile-ttl --aof-use-rdb-preamble yes --save "" --maxclients 65000
     volumes:
-      - trade_redis:/data
+      - exchange_redis:/data
     logging:
       driver: syslog
       options:
-        tag: trade_redis
+        tag: exchange_redis
         syslog-facility: local7
     networks:
       - layer
 ######################## flower
   flower:
-    image: trade:latest
-    entrypoint: celery -A trade flower -l INFO --host=0.0.0.0 --port=5555
+    image: exchange:latest
+    entrypoint: celery -A exchange flower -l INFO --host=0.0.0.0 --port=5555
     restart: always
     env_file:
       - .env
@@ -84,8 +84,8 @@ services:
       - layer
 ######################## beat scheduler
   beat:
-    image: trade:latest
-    entrypoint: sh -c "sleep 5 && celery -A trade beat -l INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler"
+    image: exchange:latest
+    entrypoint: sh -c "sleep 5 && celery -A exchange beat -l INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler"
     deploy:
       mode: replicated
       replicas: 1
@@ -103,12 +103,12 @@ services:
     logging:
       driver: syslog
       options:
-        tag: trade_scheduler
+        tag: exchange_scheduler
         syslog-facility: local7
 ######################## queue default
   default:
-    image: trade:latest
-    entrypoint: celery -A trade worker -c 2 -l INFO -Q default
+    image: exchange:latest
+    entrypoint: celery -A exchange worker -c 2 -l INFO -Q default
     deploy:
       mode: replicated
       replicas: 1
@@ -123,12 +123,12 @@ services:
     logging:
       driver: syslog
       options:
-        tag: trade_default
+        tag: exchange_default
         syslog-facility: local7
 ######################## queue bybit
   bybit:
-    image: trade:latest
-    entrypoint: celery -A trade worker -c 15 -l INFO -Q bybit
+    image: exchange:latest
+    entrypoint: celery -A exchange worker -c 15 -l INFO -Q bybit
     deploy:
       mode: replicated
       replicas: 1
@@ -143,12 +143,12 @@ services:
     logging:
       driver: syslog
       options:
-        tag: trade_bybit
+        tag: exchange_bybit
         syslog-facility: local7
 ######################## queue bybit_strategy
   bybit_strategy:
-    image: trade:latest
-    entrypoint: celery -A trade worker -c 15 -l INFO -Q bybit_strategy
+    image: exchange:latest
+    entrypoint: celery -A exchange worker -c 15 -l INFO -Q bybit_strategy
     deploy:
       mode: replicated
       replicas: 2
@@ -164,13 +164,13 @@ services:
     logging:
       driver: syslog
       options:
-        tag: trade_bybit_strategy
+        tag: exchange_bybit_strategy
         syslog-facility: local7
 
 volumes:
-  trade_postgres:
-  trade_redis:
-  trade_static:
+  exchange_postgres:
+  exchange_redis:
+  exchange_static:
 
 networks:
   layer:

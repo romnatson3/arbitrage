@@ -1,0 +1,32 @@
+[
+{
+  "model": "binance_okx.account",
+  "pk": 1,
+  "fields": {
+    "created_at": "2024-05-16T18:55:58.147Z",
+    "updated_at": "2024-05-16T18:56:03.228Z",
+    "name": "binance_test_acc",
+    "exchange": "binance",
+    "api_key": "8cdf7562faec8a4d38ce814aafcb24f478a1410d7a2dd7025391311fa75525e3",
+    "api_secret": "609ec54e3d56ff9145440c7b22f97903af3c884a37ac18d7278871136ca7df03",
+    "api_passphrase": null,
+    "testnet": true,
+    "created_by": 1
+  }
+},
+{
+  "model": "binance_okx.account",
+  "pk": 2,
+  "fields": {
+    "created_at": "2024-05-16T18:57:13.113Z",
+    "updated_at": "2024-05-16T18:57:13.113Z",
+    "name": "okx_test_acc",
+    "exchange": "okx",
+    "api_key": "522b36ef-5b62-401a-bad0-4a41e202b1ef",
+    "api_secret": "686AEC4B2E1EEF91A3C2E7AD6A52DEA1",
+    "api_passphrase": "PONYGAS5678###a",
+    "testnet": true,
+    "created_by": 1
+  }
+}
+]

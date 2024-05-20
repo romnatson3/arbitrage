@@ -1,0 +1,12 @@
+[Unit]
+Description=Exchange Service
+Requires=docker.service
+After=docker.service
+
+[Service]
+ExecStart=/usr/bin/docker-compose -f /opt/two_exchanges/docker-compose.yml --compatibility up
+ExecStop=/usr/bin/docker-compose -f /opt/two_exchanges/docker-compose.yml--compatibility down
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
