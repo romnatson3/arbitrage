@@ -19,13 +19,20 @@ class Calculator():
             stop_loss_price = price + (price / 100 * percentage)
         return round(stop_loss_price, 10)
 
-    def get_take_profit_price(self, price: float, percentage: float, position_side: str) -> float:
+    def get_take_profit_price(
+        self,
+        price: float,
+        percentage: float,
+        fee_percent: float,
+        spread_percent: float,
+        position_side: str
+    ) -> float:
         if percentage <= 0:
             return 0
         if position_side == 'long':
-            take_profit_price = price + (price / 100 * percentage)
+            take_profit_price = price * (1 + (percentage + 2 * fee_percent + spread_percent) / 100)
         if position_side == 'short':
-            take_profit_price = price - (price / 100 * percentage)
+            take_profit_price = price * (1 - (percentage + 2 * fee_percent + spread_percent) / 100)
         return round(take_profit_price, 10)
 
 

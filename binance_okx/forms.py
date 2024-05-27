@@ -25,10 +25,12 @@ class StrategyForm(forms.ModelForm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         first_account = self.fields['first_account']
+        first_account.widget.can_view_related = False
         first_account.widget.can_add_related = False
         first_account.widget.can_change_related = False
         first_account.widget.can_delete_related = False
         second_account = self.fields['second_account']
+        second_account.widget.can_view_related = False
         second_account.widget.can_add_related = False
         second_account.widget.can_change_related = False
         second_account.widget.can_delete_related = False
@@ -51,6 +53,12 @@ class StrategyForm(forms.ModelForm):
         maker_fee: float = cleaned_data.get('maker_fee')
         target_profit: float = cleaned_data.get('target_profit')
         close_position_type: str = cleaned_data.get('close_position_type')
+        close_position_parts: bool = cleaned_data.get('close_position_parts')
+        stop_loss_breakeven: bool = cleaned_data.get('stop_loss_breakeven')
+        tp_first_price_percent: float = cleaned_data.get('tp_first_price_percent')
+        tp_first_part_percent: float = cleaned_data.get('tp_first_part_percent')
+        tp_second_price_percent: float = cleaned_data.get('tp_second_price_percent')
+        tp_second_part_percent: float = cleaned_data.get('tp_second_part_percent')
         if not first_account or not second_account:
             raise forms.ValidationError('First account and second account are required')
         if first_account.exchange == second_account.exchange:
@@ -63,4 +71,11 @@ class StrategyForm(forms.ModelForm):
             self.add_error('maker_fee', 'Maker fee must be greater than 0')
         if target_profit <= 0:
             self.add_error('target_profit', 'Target profit must be greater than 0')
+        if close_position_parts:
+            if tp_first_price_percent <= 0 or tp_first_part_percent <= 0 or tp_second_price_percent <= 0 or tp_second_part_percent <= 0:
+                self.add_error('tp_first_price_percent', 'Take profit price percent must be greater than 0')
+                self.add_error('tp_first_part_percent', 'Take profit part percent must be greater than 0')
+                self.add_error('tp_second_price_percent', 'Take profit price percent must be greater than 0')
+                self.add_error('tp_second_part_percent', 'Take profit part percent must be greater than 0')
+
         return cleaned_data

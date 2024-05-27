@@ -20,3 +20,7 @@ class CancelOrderException(Exception):
 
 class ClosePositionException(Exception):
     pass
+
+
+class GetExecutionException(Exception):
+    pass

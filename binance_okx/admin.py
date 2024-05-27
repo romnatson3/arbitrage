@@ -8,9 +8,9 @@ from django.db.models import QuerySet
 from .forms import CustomUserCreationForm, CustomUserChangeForm
 from .models import (
     StatusLog, Account, Candle, OkxSymbol, BinanceSymbol, OkxCandle, BinanceCandle,
-    Strategy, Symbol
+    Strategy, Symbol, Position, Execution
 )
-from .misc import get_pretty_dict
+from .misc import get_pretty_dict, get_pretty_text, sort_data
 from .forms import StrategyForm
 
 
@@ -215,6 +215,9 @@ class CandleAdmin(admin.ModelAdmin):
 
 @admin.register(Strategy)
 class StrategyAdmin(admin.ModelAdmin):
+    class Media:
+        js = ('binance_okx/strategy.js',)
+
     list_display = (
         'id', 'name', 'enabled', 'mode', 'position_size', 'target_profit', 'updated_at'
     )
@@ -228,14 +231,22 @@ class StrategyAdmin(admin.ModelAdmin):
             None,
             {
                 'fields': (
-                    'position_size', 'taker_fee', 'maker_fee', 'target_profit', 'stop_loss',
-                    'close_position_type', 'time_to_close',
-                    ('close_position_parts', 'first_part_size', 'second_part_size'),
-                    'time_to_funding', 'only_profit', 'logging'
+                    'position_size', ('taker_fee', 'maker_fee'), 'target_profit', 'stop_loss',
+                    'close_position_type', 'time_to_close', 'time_to_funding', 'only_profit'
                 )
             }
         ),
-        (None, {'fields': ('updated_at', 'created_at')}),
+        (
+            'Take profit',
+            {
+                'fields': (
+                    'close_position_parts', 'stop_loss_breakeven',
+                    ('tp_first_price_percent', 'tp_first_part_percent'),
+                    ('tp_second_price_percent', 'tp_second_part_percent')
+                )
+            }
+        ),
+        (None, {'fields': ('logging', 'updated_at', 'created_at')}),
     )
     list_display_links = ('id', 'name')
     readonly_fields = ('id', 'updated_at', 'created_at')
@@ -253,3 +264,99 @@ class StrategyAdmin(admin.ModelAdmin):
         if not obj.pk:
             obj.created_by = request.user
         super().save_model(request, obj, form, change)
+
+
+@admin.register(Position)
+class PositionAdmin(admin.ModelAdmin):
+    list_display = (
+        'id', 'is_open', 'strategy', 'symbol', '_position_id', '_trade_id',
+        '_position_size', '_amount', 'updated_at'
+    )
+    fields = (
+        'id', 'is_open', 'strategy', 'symbol', '_position_data', '_sl_tp_data', '_ask_bid_data',
+        'updated_at', 'created_at'
+    )
+    search_fields = ('strategy__name', 'symbol__symbol')
+    list_display_links = ('id', 'strategy')
+    readonly_fields = ('id', 'updated_at', 'created_at')
+
+    def get_queryset(self, request) -> QuerySet:
+        qs = super().get_queryset(request)
+        if request.user.is_superuser:
+            return qs
+        return qs.filter(strategy__created_by=request.user)
+
+    # def has_delete_permission(self, request, obj=None):
+    #     return False
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description='Position data')
+    def _position_data(self, obj) -> str:
+        data: dict = sort_data(obj.position_data, Position.get_position_empty_data())
+        return get_pretty_text(data)
+
+    @admin.display(description='SL/TP data')
+    def _sl_tp_data(self, obj) -> str:
+        data: dict = sort_data(obj.sl_tp_data, Position.get_sl_tp_empty_data())
+        return get_pretty_text(data)
+
+    @admin.display(description='Ask/Bid data')
+    def _ask_bid_data(self, obj) -> str:
+        data: dict = sort_data(obj.ask_bid_data, Position.get_ask_bid_empty_data())
+        return get_pretty_text(data)
+
+    @admin.display(description='Position ID')
+    def _position_id(self, obj) -> str:
+        return obj.position_data.get('posId', '')
+
+    @admin.display(description='Trade ID')
+    def _trade_id(self, obj) -> str:
+        return obj.position_data.get('tradeId', '')
+
+    @admin.display(description='Position size')
+    def _position_size(self, obj) -> str:
+        return obj.position_data.get('availPos', '')
+
+    @admin.display(description='Amount USD')
+    def _amount(self, obj) -> str:
+        return obj.position_data.get('notionalUsd', '')
+
+
+@admin.register(Execution)
+class ExecutionAdmin(admin.ModelAdmin):
+    list_display = ('id', 'position', '_type', '_size', 'bill_id', 'trade_id', 'updated_at')
+    fields = ('id', 'position', 'bill_id', 'trade_id', '_data', 'updated_at', 'created_at')
+    list_display_links = ('id', 'position')
+
+    def get_queryset(self, request) -> QuerySet:
+        qs = super().get_queryset(request)
+        if request.user.is_superuser:
+            return qs
+        return qs.filter(position__strategy__created_by=request.user)
+
+    # def has_delete_permission(self, request, obj=None):
+    #     return False
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description='Data')
+    def _data(self, obj) -> str:
+        data: dict = sort_data(obj.data, Execution.get_empty_data())
+        return get_pretty_text(data)
+
+    @admin.display(description='Type')
+    def _type(self, obj) -> str:
+        return obj.data.get('subType', '')
+
+    @admin.display(description='Size')
+    def _size(self, obj) -> str:
+        return obj.data.get('sz', '')

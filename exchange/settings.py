@@ -171,7 +171,7 @@ CACHES = {
         },
         'KEY_PREFIX': '',
         'TIMEOUT': None,
-        'KEY_FUNCTION': key_maker,
+        # 'KEY_FUNCTION': key_maker,
     }
 }
 

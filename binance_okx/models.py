@@ -236,8 +236,8 @@ class Strategy(BaseModel):
     name = models.CharField('name', max_length=255, blank=False, null=False, help_text='Strategy name')
     enabled = models.BooleanField('Enabled', default=True, help_text='Is enabled')
     task = models.ForeignKey('django_celery_beat.PeriodicTask', models.RESTRICT, verbose_name='Task', null=True)
-    first_account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='strategies_set', help_text='First Account')
-    second_account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='strategies', help_text='Second Account')
+    first_account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='strategies_set', help_text='Binance account')
+    second_account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='strategies', help_text='OKX account')
     symbols = models.ManyToManyField(Symbol, related_name='strategies', help_text='Symbols')
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='strategies', help_text='Created by')
     position_size = models.FloatField('Position size', default=0.0, help_text='Max position size, USDT')
@@ -248,8 +248,11 @@ class Strategy(BaseModel):
     close_position_type = models.CharField('Close position type', choices=ClosePositionType.choices, default=ClosePositionType.market, help_text='Close position type')
     time_to_close = models.IntegerField('Time to close', default=0, help_text='Time to close, seconds')
     close_position_parts = models.BooleanField('Close position parts', default=False)
-    first_part_size = models.FloatField('First part size', default=0.0, help_text='First part size, %')
-    second_part_size = models.FloatField('Second part size', default=0.0, help_text='Second part size, %')
+    stop_loss_breakeven = models.BooleanField('Breakeven', default=False, help_text='Stop loss break even')
+    tp_first_price_percent = models.FloatField('Take profit price', default=0.0, help_text='Take profit price for first part, %', blank=True)
+    tp_first_part_percent = models.FloatField('First part', default=0.0, help_text='Take profit first part, %', blank=True)
+    tp_second_price_percent = models.FloatField('Take profit price', default=0.0, help_text='Take profit price for second part, %', blank=True)
+    tp_second_part_percent = models.FloatField('Second part', default=0.0, help_text='Take profit second part, %', blank=True)
     time_to_funding = models.IntegerField('Time to funding', default=0, help_text='Time to funding, minutes')
     only_profit = models.BooleanField('Only profit', default=False, help_text='Trading only in the direction of funding')
     logging = models.BooleanField('logging', default=False, help_text='Logging enabled')
@@ -279,18 +282,20 @@ class Strategy(BaseModel):
 
     @property
     def extra_log(self) -> dict:
+        if not self._extra_log['created_by'] and hasattr(self, 'created_by'):
+            self._extra_log.update(created_by=self.created_by)
         return self._extra_log
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._extra_log = dict(
-            created_by=self.created_by if hasattr(self, 'created_by') else None,
+            created_by=None,
             strategy=self,
             symbol=None
         )
 
     @property
-    def fee(self) -> float:
+    def fee_percent(self) -> float:
         if self.close_position_type == 'market':
             fee = self.taker_fee
         else:
@@ -299,3 +304,259 @@ class Strategy(BaseModel):
 
     def __str__(self):
         return f'{self.id}_{self.name}'
+
+
+class ExecutionManager(models.Manager):
+    def get_queryset(self) -> QuerySet:
+        return (
+            super().get_queryset()
+            .select_related('position')
+        )
+
+
+class Execution(BaseModel):
+    class Meta:
+        verbose_name = 'Execution'
+        verbose_name_plural = 'Executions'
+
+    objects = ExecutionManager()
+
+    sub_type = {
+        3: 'Open long',
+        4: 'Open short',
+        5: 'Close long',
+        6: 'Close short'
+    }
+
+    @staticmethod
+    def get_empty_data() -> dict:
+        data = {
+            'bal': None,
+            'balChg': None,
+            'billId': None,
+            'ccy': None,
+            'clOrdId': None,
+            'execType': None,
+            'fee': None,
+            'fillFwdPx': None,
+            'fillIdxPx': None,
+            'fillMarkPx': None,
+            'fillMarkVol': None,
+            'fillPxUsd': None,
+            'fillPxVol': None,
+            'fillTime': None,
+            'from': None,
+            'instId': None,
+            'instType': None,
+            'interest': None,
+            'mgnMode': None,
+            'notes': None,
+            'ordId': None,
+            'pnl': None,
+            'posBal': None,
+            'posBalChg': None,
+            'px': None,
+            'subType': None,
+            'sz': None,
+            'tag': None,
+            'to': None,
+            'tradeId': None,
+            'ts': None,
+            'type': None
+        }
+        return data
+
+    data = models.JSONField('Date', default=dict)
+    position = models.ForeignKey('Position', on_delete=models.PROTECT, related_name='executions')
+    bill_id = models.CharField('Bill ID', max_length=255, unique=True)
+    trade_id = models.CharField('Trade ID', max_length=255)
+
+    def __str__(self):
+        return f'{self.position} - {self.bill_id}'
+
+
+class PositionManager(models.Manager):
+    def get_queryset(self) -> QuerySet:
+        return (
+            super().get_queryset()
+            .select_related('symbol', 'strategy')
+        )
+
+
+class Position(BaseModel):
+    class Meta:
+        verbose_name = 'Position'
+        verbose_name_plural = 'Positions'
+
+    objects = PositionManager()
+
+    @staticmethod
+    def get_sl_tp_empty_data() -> dict:
+        data = {
+            'stop_loss_price': None,
+            'stop_loss_breakeven': None,
+            'take_profit_price': None,
+            'tp_first_price': None,
+            'tp_first_part': None,
+            'tp_second_price': None,
+            'tp_second_part': None
+        }
+        return data
+
+    @staticmethod
+    def get_position_empty_data() -> dict:
+        data = {
+            'adl': None,
+            'availPos': None,
+            'avgPx': None,
+            'baseBal': None,
+            'baseBorrowed': None,
+            'baseInterest': None,
+            'bePx': None,
+            'bizRefId': None,
+            'bizRefType': None,
+            'cTime': None,
+            'ccy': None,
+            'clSpotInUseAmt': None,
+            'closeOrderAlgo': None,
+            'deltaBS': None,
+            'deltaPA': None,
+            'fee': None,
+            'fundingFee': None,
+            'gammaBS': None,
+            'gammaPA': None,
+            'idxPx': None,
+            'imr': None,
+            'instId': None,
+            'instType': None,
+            'interest': None,
+            'last': None,
+            'lever': None,
+            'liab': None,
+            'liabCcy': None,
+            'liqPenalty': None,
+            'liqPx': None,
+            'margin': None,
+            'markPx': None,
+            'maxSpotInUseAmt': None,
+            'mgnMode': None,
+            'mgnRatio': None,
+            'mmr': None,
+            'notionalUsd': None,
+            'optVal': None,
+            'pendingCloseOrdLiabVal': None,
+            'pnl': None,
+            'pos': None,
+            'posCcy': None,
+            'posId': None,
+            'posSide': None,
+            'quoteBal': None,
+            'quoteBorrowed': None,
+            'quoteInterest': None,
+            'realizedPnl': None,
+            'spotInUseAmt': None,
+            'spotInUseCcy': None,
+            'thetaBS': None,
+            'thetaPA': None,
+            'tradeId': None,
+            'uTime': None,
+            'upl': None,
+            'uplLastPx': None,
+            'uplRatio': None,
+            'uplRatioLastPx': None,
+            'usdPx': None,
+            'vegaBS': None,
+            'vegaPA': None
+        }
+        return data
+
+    @staticmethod
+    def get_ask_bid_empty_data() -> dict:
+        data = {
+            'bid_first_exchange': None,
+            'ask_first_exchange': None,
+            'bid_second_exchange': None,
+            'ask_second_exchange': None,
+            'delta_points': None,
+            'delta_percent': None,
+            'spread_points': None,
+            'spread_percent': None,
+            'bid_first_exchange_entry': None,
+            'ask_first_exchange_entry': None,
+            'bid_second_exchange_entry': None,
+            'ask_second_exchange_entry': None,
+            'delta_points_entry': None,
+            'delta_percent_entry': None,
+            'spread_points_entry': None,
+            'spread_percent_entry': None,
+        }
+        return data
+
+    position_data = models.JSONField('Position data', default=dict)
+    sl_tp_data = models.JSONField('SL/TP data', default=dict)
+    ask_bid_data = models.JSONField('Ask/Bid data', default=dict)
+    symbol = models.ForeignKey(Symbol, on_delete=models.PROTECT, related_name='positions', blank=True, null=True)
+    strategy = models.ForeignKey(Strategy, on_delete=models.PROTECT, related_name='positions', blank=True, null=True)
+    is_open = models.BooleanField('Is open', default=True)
+
+    @property
+    def side(self) -> str:
+        return self.position_data['posSide']
+
+    @property
+    def size(self) -> float:
+        return self.position_data['availPos']
+
+    @property
+    def entry_price(self) -> float:
+        return self.position_data['avgPx']
+
+    def __str__(self):
+        return f'{self.id}_{self.symbol}_{self.strategy}_{"Open" if self.is_open else "Close"}'
+
+
+class Report(BaseModel):
+    class Meta:
+        verbose_name = 'Report'
+        verbose_name_plural = 'Reports'
+
+    @staticmethod
+    def get_report_empty_data() -> dict:
+        data = {
+            'number': None,
+            'symbol': None,
+            'open_date': None,
+            'open_time': None,
+            'side': None,
+            'sub_type': None,
+            'bid_first_exchange': None,
+            'ask_first_exchange': None,
+            'bid_second_exchange': None,
+            'ask_second_exchange': None,
+            'delta_points': None,
+            'delta_percent': None,
+            'spread_points': None,
+            'spread_percent': None,
+            'bid_first_exchange_entry': None,
+            'ask_first_exchange_entry': None,
+            'bid_second_exchange_entry': None,
+            'ask_second_exchange_entry': None,
+            'delta_points_entry': None,
+            'delta_percent_entry': None,
+            'spread_points_entry': None,
+            'spread_percent_entry': None,
+            'value': None,
+            'entry_price': None,
+            'diff_entry_trigger_prices': None,
+            'close_time': None,
+            'close_price': None,
+            'duration': None,
+            'open_fee': None,
+            'close_fee': None,
+            'profit': None
+        }
+        return data
+
+    data = models.JSONField('Date', default=dict)
+    position = models.ForeignKey(Position, on_delete=models.PROTECT, related_name='reports', blank=True, null=True)
+    execution = models.ForeignKey(Execution, on_delete=models.PROTECT, related_name='reports', blank=True, null=True)

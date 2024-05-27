@@ -69,7 +69,7 @@ def get_pretty_dict(data) -> str:
     data = json.dumps(data, indent=2)
     data = re.sub('"', "'", data)
     return mark_safe(
-        f'<pre style="font-size: 1.05em; color: #efbcab; font-family: monospace;">{data}</pre>'
+        f'<pre style="font-size: 1.05em; font-family: monospace;">{data}</pre>'
     )
 
 
@@ -77,9 +77,17 @@ def get_pretty_text(obj) -> str:
     text = json.dumps(obj, indent=2)
     text = '<br>'.join([f'{k}: {v}' for k, v in obj.items()])
     return mark_safe(
-        '<span style="font-size: 1.05em; color: #efbcab; font-family: monospace;'
+        '<span style="font-size: 1.05em; font-family: monospace;'
         f'white-space: nowrap;">{text}</span>'
     )
+
+
+def sort_data(parameters: dict, template: dict) -> dict:
+    sorted_data = {
+        i: parameters.get(i)
+        for i in template.keys()
+    }
+    return sorted_data
 
 
 def get_client_ip(request) -> str:
@@ -102,6 +110,9 @@ def convert_dict_values(data: dict) -> dict[str, str | int | float]:
                 data[k] = v
             elif v == '':
                 data[k] = None
-            if k in ['uTime', 'cTime']:
-                data[k] = datetime.fromtimestamp(int(v) / 1000).strftime('%d-%m-%Y %T')
+            if k in ['uTime', 'cTime', 'pTime', 'fillTime', 'ts']:
+                try:
+                    data[k] = datetime.fromtimestamp(int(v) / 1000).strftime('%d-%m-%Y %T')
+                except ValueError:
+                    data[k] = v
     return data
