@@ -7,3 +7,4 @@ celerybeat-schedule
 media/
 .vimspector.json
 .vimspector.session
+dumps/

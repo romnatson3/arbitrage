@@ -75,7 +75,13 @@ def get_pretty_dict(data) -> str:
 
 def get_pretty_text(obj) -> str:
     text = json.dumps(obj, indent=2)
-    text = '<br>'.join([f'{k}: {v}' for k, v in obj.items()])
+    l = []
+    for k, v in obj.items():
+        if isinstance(v, float):
+            l.append(f'{k}: {v:.5f}')
+        else:
+            l.append(f'{k}: {v}')
+    text = '<br>'.join(l)
     return mark_safe(
         '<span style="font-size: 1.05em; font-family: monospace;'
         f'white-space: nowrap;">{text}</span>'
@@ -102,7 +108,7 @@ def get_client_ip(request) -> str:
 def convert_dict_values(data: dict) -> dict[str, str | int | float]:
     for k, v in data.items():
         if isinstance(v, str):
-            if re.search(r'\d+\.\d+', v):
+            if re.search(r'^(?!.*:)\d+\.\d+$', v):
                 data[k] = round(float(v), 10)
             elif re.search(r'^[-+]?\d+$', v):
                 data[k] = int(v)
@@ -112,7 +118,7 @@ def convert_dict_values(data: dict) -> dict[str, str | int | float]:
                 data[k] = None
             if k in ['uTime', 'cTime', 'pTime', 'fillTime', 'ts']:
                 try:
-                    data[k] = datetime.fromtimestamp(int(v) / 1000).strftime('%d-%m-%Y %T')
+                    data[k] = datetime.fromtimestamp(int(v) / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')
                 except ValueError:
                     data[k] = v
     return data

@@ -131,6 +131,12 @@ class OkxSymbol(BaseModel):
         tz = timezone.get_current_timezone()
         return datetime.fromtimestamp(int(funding_time) / 1000).astimezone(tz)
 
+    @property
+    def funding_rate(self) -> float:
+        client = PublicData.PublicAPI(flag='0', debug=False)
+        result = client.get_funding_rate(instId=self.inst_id)
+        return float(result['data'][0]['fundingRate'])
+
     def __str__(self):
         return self.symbol
 
@@ -255,13 +261,12 @@ class Strategy(BaseModel):
     tp_second_part_percent = models.FloatField('Second part', default=0.0, help_text='Take profit second part, %', blank=True)
     time_to_funding = models.IntegerField('Time to funding', default=0, help_text='Time to funding, minutes')
     only_profit = models.BooleanField('Only profit', default=False, help_text='Trading only in the direction of funding')
-    logging = models.BooleanField('logging', default=False, help_text='Logging enabled')
     mode = models.CharField('Mode', choices=Mode.choices, default=Mode.trade, help_text='Algorithm mode')
 
     def _create_task(self) -> PeriodicTask:
         task_name = f'strategy_{self.id}'
         task = 'binance_okx.tasks.run_strategy'
-        interval, _ = IntervalSchedule.objects.get_or_create(every=2, period='seconds')
+        interval, _ = IntervalSchedule.objects.get_or_create(every=5, period='seconds')
         periodic_task, exists = PeriodicTask.objects.get_or_create(
             name=task_name,
             task=task,
@@ -310,7 +315,7 @@ class ExecutionManager(models.Manager):
     def get_queryset(self) -> QuerySet:
         return (
             super().get_queryset()
-            .select_related('position')
+            .select_related('position', 'position__symbol', 'position__strategy')
         )
 
 
@@ -318,6 +323,11 @@ class Execution(BaseModel):
     class Meta:
         verbose_name = 'Execution'
         verbose_name_plural = 'Executions'
+        unique_together = ('bill_id', 'trade_id')
+        indexes = [
+            models.Index(fields=['bill_id']),
+            models.Index(fields=['trade_id'])
+        ]
 
     objects = ExecutionManager()
 
@@ -367,8 +377,8 @@ class Execution(BaseModel):
         return data
 
     data = models.JSONField('Date', default=dict)
-    position = models.ForeignKey('Position', on_delete=models.PROTECT, related_name='executions')
-    bill_id = models.CharField('Bill ID', max_length=255, unique=True)
+    position = models.ForeignKey('Position', on_delete=models.CASCADE, related_name='executions')
+    bill_id = models.CharField('Bill ID', max_length=255)
     trade_id = models.CharField('Trade ID', max_length=255)
 
     def __str__(self):
@@ -381,6 +391,12 @@ class PositionManager(models.Manager):
             super().get_queryset()
             .select_related('symbol', 'strategy')
         )
+
+    def create(self, *args, **kwargs):
+        kwargs['sl_tp_data'] = Position.get_sl_tp_empty_data()
+        kwargs['ask_bid_data'] = Position.get_ask_bid_empty_data()
+        position = super().create(*args, **kwargs)
+        return position
 
 
 class Position(BaseModel):
@@ -399,7 +415,11 @@ class Position(BaseModel):
             'tp_first_price': None,
             'tp_first_part': None,
             'tp_second_price': None,
-            'tp_second_part': None
+            'tp_second_part': None,
+            'tp_first_limit_order_id': None,
+            'stop_loss_breakeven_set': None,
+            'first_part_closed': None,
+            'second_part_closed': None
         }
         return data
 
@@ -513,50 +533,3 @@ class Position(BaseModel):
 
     def __str__(self):
         return f'{self.id}_{self.symbol}_{self.strategy}_{"Open" if self.is_open else "Close"}'
-
-
-class Report(BaseModel):
-    class Meta:
-        verbose_name = 'Report'
-        verbose_name_plural = 'Reports'
-
-    @staticmethod
-    def get_report_empty_data() -> dict:
-        data = {
-            'number': None,
-            'symbol': None,
-            'open_date': None,
-            'open_time': None,
-            'side': None,
-            'sub_type': None,
-            'bid_first_exchange': None,
-            'ask_first_exchange': None,
-            'bid_second_exchange': None,
-            'ask_second_exchange': None,
-            'delta_points': None,
-            'delta_percent': None,
-            'spread_points': None,
-            'spread_percent': None,
-            'bid_first_exchange_entry': None,
-            'ask_first_exchange_entry': None,
-            'bid_second_exchange_entry': None,
-            'ask_second_exchange_entry': None,
-            'delta_points_entry': None,
-            'delta_percent_entry': None,
-            'spread_points_entry': None,
-            'spread_percent_entry': None,
-            'value': None,
-            'entry_price': None,
-            'diff_entry_trigger_prices': None,
-            'close_time': None,
-            'close_price': None,
-            'duration': None,
-            'open_fee': None,
-            'close_fee': None,
-            'profit': None
-        }
-        return data
-
-    data = models.JSONField('Date', default=dict)
-    position = models.ForeignKey(Position, on_delete=models.PROTECT, related_name='reports', blank=True, null=True)
-    execution = models.ForeignKey(Execution, on_delete=models.PROTECT, related_name='reports', blank=True, null=True)

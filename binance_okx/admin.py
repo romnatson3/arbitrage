@@ -1,10 +1,14 @@
 import logging
+import csv
 from django.contrib import admin
 from django.utils import timezone
 from django.utils.html import format_html
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth import get_user_model
 from django.db.models import QuerySet
+from django.urls import path
+from django.http import HttpResponse
+from io import StringIO
 from .forms import CustomUserCreationForm, CustomUserChangeForm
 from .models import (
     StatusLog, Account, Candle, OkxSymbol, BinanceSymbol, OkxCandle, BinanceCandle,
@@ -12,6 +16,7 @@ from .models import (
 )
 from .misc import get_pretty_dict, get_pretty_text, sort_data
 from .forms import StrategyForm
+from .filters import PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter
 
 
 User = get_user_model()
@@ -70,7 +75,7 @@ class StatusLogAdmin(admin.ModelAdmin):
         else:
             color = 'red'
         return format_html(
-            '<pre style="color:{color}; white-space: pre-wrap; font-family: monospace; font-size: 1.05em">{msg}</pre>',
+            '<pre style="color:{color}; white-space: pre-wrap; font-family: monospace; ">{msg}</pre>',
             color=color,
             msg=obj.msg
         )
@@ -246,7 +251,7 @@ class StrategyAdmin(admin.ModelAdmin):
                 )
             }
         ),
-        (None, {'fields': ('logging', 'updated_at', 'created_at')}),
+        (None, {'fields': ('updated_at', 'created_at')}),
     )
     list_display_links = ('id', 'name')
     readonly_fields = ('id', 'updated_at', 'created_at')
@@ -269,7 +274,7 @@ class StrategyAdmin(admin.ModelAdmin):
 @admin.register(Position)
 class PositionAdmin(admin.ModelAdmin):
     list_display = (
-        'id', 'is_open', 'strategy', 'symbol', '_position_id', '_trade_id',
+        'id', 'is_open', 'strategy', '_position_side', 'symbol', '_position_id', '_trade_id',
         '_position_size', '_amount', 'updated_at'
     )
     fields = (
@@ -278,7 +283,9 @@ class PositionAdmin(admin.ModelAdmin):
     )
     search_fields = ('strategy__name', 'symbol__symbol')
     list_display_links = ('id', 'strategy')
-    readonly_fields = ('id', 'updated_at', 'created_at')
+    readonly_fields = ('id', 'updated_at', 'created_at', '_position_data', '_sl_tp_data', '_ask_bid_data')
+    list_filter = ('is_open', PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter)
+    actions = ['export_csv_action']
 
     def get_queryset(self, request) -> QuerySet:
         qs = super().get_queryset(request)
@@ -324,7 +331,61 @@ class PositionAdmin(admin.ModelAdmin):
 
     @admin.display(description='Amount USD')
     def _amount(self, obj) -> str:
-        return obj.position_data.get('notionalUsd', '')
+        return round(obj.position_data.get('notionalUsd', ''), 2)
+
+    @admin.display(description='Position side')
+    def _position_side(self, obj) -> str:
+        return obj.position_data.get('posSide', '')
+
+    @admin.action(description='Export CSV')
+    def export_csv_action(self, request, queryset):
+        f = StringIO()
+        writer = csv.writer(f, delimiter=';')
+        writer.writerow([
+            'ІД Позиції', 'Монета', 'Дата', 'Час', 'Позиція (шорт/лонг)', 'Тип',
+            'Бід біржа№1 (парсинг)', 'Аск біржа№1 (парсинг)', 'Бід біржа№2 (парсинг)',
+            'Аск біржа№2 (парсинг)', 'Дельта в пунктах (парсинг)', 'Дельта в % (парсинг)',
+            'Спред біржа №2 в пунктах (парсинг)', 'Спред біржа №2 в % (парсинг)',
+            'Бід біржа№1 (вхід)', 'Аск біржа№1 (вхід)', 'Бід біржа№2 (вхід)',
+            'Аск біржа№2 (вхід)', 'Дельта в пунктах (вхід)', 'Дельта в % (вхід)',
+            'Спред біржа №2 в пунктах (вхід)', 'Спред біржа №2 в % (вхід)',
+            'Обсяг на ціні входу в USDT', 'Ціна', 'Час закриття',
+            'Тривалість угоди в мілісекундах', 'Комісія', 'Прибуток'
+        ])
+        executions = Execution.objects.values_list(
+            'position__id', 'position__symbol', 'position__position_data__cTime',
+            'position__position_data__posSide', 'data__subType', 'position__ask_bid_data__bid_first_exchange',
+            'position__ask_bid_data__ask_first_exchange', 'position__ask_bid_data__bid_second_exchange',
+            'position__ask_bid_data__ask_second_exchange', 'position__ask_bid_data__delta_points',
+            'position__ask_bid_data__delta_percent', 'position__ask_bid_data__spread_points',
+            'position__ask_bid_data__spread_percent', 'position__ask_bid_data__bid_first_exchange_entry',
+            'position__ask_bid_data__ask_first_exchange_entry', 'position__ask_bid_data__bid_second_exchange_entry',
+            'position__ask_bid_data__ask_second_exchange_entry', 'position__ask_bid_data__delta_points_entry',
+            'position__ask_bid_data__delta_percent_entry', 'position__ask_bid_data__spread_points_entry',
+            'position__ask_bid_data__spread_percent_entry', 'data__sz', 'data__px',
+            'data__ts', 'data__fee', 'data__pnl'
+        ).filter(position__in=queryset).order_by('position__id', 'trade_id').all()
+        for row in executions:
+            row = list(row)
+            date, time = row[2].split(' ')
+            usdt = row[21] * row[22]
+            duration = (
+                timezone.datetime.strptime(row[2], '%d-%m-%Y %H:%M:%S.%f') -
+                timezone.datetime.strptime(row[23], '%d-%m-%Y %H:%M:%S.%f')
+            )
+            row[2] = date
+            row[21] = usdt
+            row.insert(3, time)
+            row.insert(25, duration.total_seconds())
+            for i, j in enumerate(row):
+                if isinstance(j, float):
+                    row[i] = f'{j:.10f}'.rstrip('.0')
+            writer.writerow(row)
+        f.seek(0)
+        response = HttpResponse(f, content_type='text/csv')
+        response['Content-Disposition'] = 'attachment; filename="positions.csv"'
+        self.message_user(request, f'Positions exported: {queryset.count()}')
+        return response
 
 
 @admin.register(Execution)

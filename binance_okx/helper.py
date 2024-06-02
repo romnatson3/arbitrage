@@ -17,7 +17,7 @@ class Calculator():
             stop_loss_price = price - (price / 100 * percentage)
         if position_side == 'short':
             stop_loss_price = price + (price / 100 * percentage)
-        return round(stop_loss_price, 10)
+        return round(stop_loss_price, 5)
 
     def get_take_profit_price(
         self,
@@ -33,7 +33,7 @@ class Calculator():
             take_profit_price = price * (1 + (percentage + 2 * fee_percent + spread_percent) / 100)
         if position_side == 'short':
             take_profit_price = price * (1 - (percentage + 2 * fee_percent + spread_percent) / 100)
-        return round(take_profit_price, 10)
+        return round(take_profit_price, 5)
 
 
 calc = Calculator()
@@ -109,3 +109,23 @@ class CachePrice():
 
     def get_bid_last_price(self, symbol):
         return self._get_bid(symbol)[1]
+
+
+class CacheOrderId():
+    def __init__(self, account_id: int, inst_id: str) -> None:
+        self.conection = get_redis_connection('default')
+        self.pipeline = self.conection.pipeline()
+        self.key = f'orders_{inst_id}_{account_id}'
+
+    def add(self, order_id: str) -> bool:
+        self.pipeline.execute_command('lpush', self.key, order_id)
+        self.pipeline.execute_command('ltrim', self.key, 0, 100)
+        result = self.pipeline.execute()
+        return all(result)
+
+    def remove(self, order_id: str) -> bool:
+        return self.conection.lrem(self.key, 0, order_id) == 1
+
+    def get_orders(self) -> list[str]:
+        l = self.conection.lrange(self.key, 0, -1)
+        return [i.decode() for i in l][::-1]

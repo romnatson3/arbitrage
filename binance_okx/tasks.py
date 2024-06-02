@@ -1,20 +1,32 @@
 import logging
+import websocket
+from websocket._exceptions import WebSocketConnectionClosedException, WebSocketException
+import threading
+import json
+import base64
+import hmac
+import time
+import ctypes
+from typing import Callable
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 # from celery.utils.log import get_task_logger
-from exchange.celery import app
-from .models import StatusLog, OkxSymbol, BinanceSymbol
-from .exceptions import AcquireLockException
+from celery.signals import worker_ready
 from binance.um_futures import UMFutures
 import okx.MarketData
 import okx.PublicData
-from .helper import CachePrice
-from .helper import TaskLock
-from .models import Strategy, Symbol, Account, Position, Execution
-from .exceptions import GetPositionException, GetExecutionException
 import okx.Account
+from exchange.celery import app
+from .helper import CachePrice, TaskLock
+from .models import Strategy, Symbol, Account, Position, Execution, StatusLog, OkxSymbol, BinanceSymbol
+from .exceptions import GetPositionException, GetExecutionException, AcquireLockException
 from .misc import convert_dict_values
+from .trade import open_position, check_price_condition, watch_position
+from .handlers import save_filled_limit_order_id
+
+
+logger = logging.getLogger(__name__)
 
 
 # logger = get_task_logger(__name__)
@@ -126,51 +138,6 @@ def update_binance_ask_bid_price() -> None:
 
 
 @app.task
-def update_okx_positions() -> None:
-    accounts = Account.objects.filter(exchange='okx').all()
-    if not accounts:
-        logger.debug('No okx accounts found')
-        return
-    try:
-        with TaskLock('okx_task_update_positions'):
-            for account in accounts:
-                try:
-                    apikey = account.api_key
-                    secretkey = account.api_secret
-                    passphrase = account.api_passphrase
-                    flag = '1' if account.testnet else '0'
-                    client = okx.Account.AccountAPI(apikey, secretkey, passphrase, flag=flag, debug=False)
-                    result = client.get_positions(instType='SWAP')
-                    if result['code'] != '0':
-                        raise GetPositionException(f'Failed to get positions data. {result["msg"]}')
-                    if not result['data']:
-                        logger.debug(f'No found any positions for account: {account.name}')
-                        for i in cache.keys(f'okx_position_*_{account.id}'):
-                            cache.delete(i)
-                        continue
-                    for i in result['data']:
-                        symbol = i['instId']
-                        i = convert_dict_values(i)
-                        cache.set(f'okx_position_{symbol}_{account.id}', i)
-                    cached_positions = {i.split('_')[-2] for i in cache.keys(f'okx_position_*_{account.id}')}
-                    new_positions = {i['instId'] for i in result['data']}
-                    for symbol in cached_positions - new_positions:
-                        cache.delete(f'okx_position_{symbol}_{account.id}')
-                    logger.info(
-                        f'Found {len(result["data"])} open positions for account: {account.name}. '
-                        f'{", ".join(sorted(list(new_positions)))}'
-                    )
-                except Exception as e:
-                    logger.exception(e)
-                    continue
-    except AcquireLockException:
-        logger.debug('Task update_okx_positions is already running')
-    except Exception as e:
-        logger.exception(e)
-        raise e
-
-
-@app.task
 def check_if_position_is_closed() -> None:
     accounts = Account.objects.filter(exchange='okx').all()
     if not accounts:
@@ -197,64 +164,66 @@ def check_if_position_is_closed() -> None:
                         f'Found {len(open_positions_ex)} open positions in exchange for account: {account.name}. '
                         f'{", ".join(sorted(list(open_positions_ex)))}'
                     )
+                    last_execution = Execution.objects.order_by('bill_id').last()
+                    result = client.get_account_bills(
+                        instType='SWAP', mgnMode='isolated', type=2,
+                        before=last_execution.bill_id
+                    )
+                    if result['code'] != '0':
+                        raise GetExecutionException(result['data'][0]['sMsg'])
+                    all_executions = [convert_dict_values(i) for i in result['data']]
                     for position in open_positions_db:
-                        position.strategy._extra_log.update(symbol=position.symbol.symbol)
-                        if position.symbol.okx.inst_id in open_positions_ex:
-                            logger.debug(
-                                f'Position "{position}" is still open in exchange',
-                                extra=position.strategy.extra_log
-                            )
-                            if position.size != open_positions_ex[position.symbol.okx.inst_id]['availPos']:
-                                logger.warning(
-                                    f'Position "{position}" size is different in database and exchange',
+                        try:
+                            position.strategy._extra_log.update(symbol=position.symbol.symbol)
+                            if position.symbol.okx.inst_id in open_positions_ex:
+                                logger.debug(
+                                    f'Position "{position}" is still open in exchange',
                                     extra=position.strategy.extra_log
                                 )
-                                position.position_data = open_positions_ex[position.symbol.okx.inst_id]
-                                position.save()
-                                logger.info(f'Updated position "{position}"', extra=position.strategy.extra_log)
+                                if position.size != open_positions_ex[position.symbol.okx.inst_id]['availPos']:
+                                    logger.warning(
+                                        f'Position "{position}" size is different in database and exchange',
+                                        extra=position.strategy.extra_log
+                                    )
+                                    position.position_data = open_positions_ex[position.symbol.okx.inst_id]
+                                    position.save()
+                                    logger.info(f'Updated position "{position}"', extra=position.strategy.extra_log)
+                                else:
+                                    continue
                             else:
+                                logger.warning(
+                                    f'Position {position} is closed in exchange',
+                                    extra=position.strategy.extra_log
+                                )
+                                position.is_open = False
+                                position.save()
+                            executions = [
+                                i for i in all_executions
+                                if i['instId'] == position.symbol.okx.inst_id
+                            ]
+                            if not executions:
+                                logger.warning(
+                                    f'No found any new executions for position {position}',
+                                    extra=position.strategy.extra_log
+                                )
                                 continue
-                        else:
-                            logger.warning(
-                                f'Position {position} is closed in exchange',
+                            logger.info(
+                                f'Found {len(executions)} executions for position {position}',
                                 extra=position.strategy.extra_log
                             )
-                            position.is_open = False
-                            position.save()
-                        last_execution = position.executions.last()
-                        result = client.get_account_bills(
-                            instType='SWAP', mgnMode='isolated', type=2,
-                            before=last_execution.bill_id
-                        )
-                        if result['code'] != '0':
-                            raise GetExecutionException(result['data'][0]['sMsg'])
-                        if not result['data']:
-                            logger.warning(
-                                f'No found any new executions for position {position}',
-                                extra=position.strategy.extra_log
-                            )
-                            continue
-                        logger.info(
-                            f'Found {len(result["data"])} executions for position {position}',
-                            extra=position.strategy.extra_log
-                        )
-                        for e in [convert_dict_values(i) for i in result['data']]:
-                            if Execution.sub_type.get(e['subType']):
-                                e['subType'] = Execution.sub_type[e['subType']]
-                            execution, created = Execution.objects.get_or_create(
-                                position=position, bill_id=e['billId'], trade_id=e['tradeId'],
-                                data=e
-                            )
-                            if created:
+                            for e in executions:
+                                if Execution.sub_type.get(e['subType']):
+                                    e['subType'] = Execution.sub_type[e['subType']]
+                                execution = Execution.objects.create(
+                                    position=position, bill_id=e['billId'], trade_id=e['tradeId'], data=e
+                                )
                                 logger.info(
                                     f'Saved execution {execution.bill_id=} {execution.trade_id=}',
                                     extra=position.strategy.extra_log
                                 )
-                            else:
-                                logger.warning(
-                                    f'Execution {execution.bill_id=} {execution.trade_id=} already exists',
-                                    extra=position.strategy.extra_log
-                                )
+                        except Exception as e:
+                            logger.exception(e, extra=position.strategy.extra_log)
+                            continue
                 except Exception as e:
                     logger.exception(e)
                     continue
@@ -268,7 +237,7 @@ def check_if_position_is_closed() -> None:
 @app.task
 def run_strategy(strategy_id: int) -> None:
     try:
-        strategy = Strategy.objects.cache(id=strategy_id, set=True)[0]
+        strategy = Strategy.objects.cache(id=strategy_id, enabled=True, set=True)[0]
         for symbol in strategy.symbols.all():
             strategy_for_symbol.delay(strategy.id, symbol.symbol)
     except Exception as e:
@@ -281,64 +250,197 @@ def strategy_for_symbol(strategy_id: int, symbol: str) -> None:
         strategy = Strategy.objects.cache(id=strategy_id)[0]
         strategy._extra_log.update(symbol=symbol)
         with TaskLock(f'task_strategy_{strategy_id}_{symbol}'):
-            logger.debug('Run strategy', extra=strategy.extra_log)
-            first_exchange = CachePrice(strategy.first_account.exchange)
-            second_exchange = CachePrice(strategy.second_account.exchange)
-            second_exchange_previous_ask = second_exchange.get_ask_previous_price(symbol)
-            second_exchange_previous_bid = second_exchange.get_bid_previous_price(symbol)
-            second_exchange_last_ask = second_exchange.get_ask_last_price(symbol)
-            second_exchange_last_bid = second_exchange.get_bid_last_price(symbol)
-            first_exchange_previous_ask = first_exchange.get_ask_previous_price(symbol)
-            first_exchange_previous_bid = first_exchange.get_bid_previous_price(symbol)
-            first_exchange_last_ask = first_exchange.get_ask_last_price(symbol)
-            first_exchange_last_bid = first_exchange.get_bid_last_price(symbol)
-            if second_exchange_previous_ask < first_exchange_previous_ask:
-                logger.debug(
-                    'First condition for long position met '
-                    f'{first_exchange_previous_ask=} < {second_exchange_previous_ask=}',
-                    extra=strategy.extra_log
-                )
-                first_exchange_delta_percent = (
-                    (first_exchange_previous_bid - first_exchange_last_bid) / first_exchange_previous_bid * 100
-                )
-                second_exchange_delta_percent = (
-                    (second_exchange_previous_ask - second_exchange_last_ask) / second_exchange_previous_ask * 100
-                )
-                position_side = 'long'
-            elif second_exchange_previous_bid > first_exchange_previous_bid:
-                logger.debug(
-                    'First condition for short position met '
-                    f'{first_exchange_previous_bid=} > {second_exchange_previous_bid=}',
-                    extra=strategy.extra_log
-                )
-                first_exchange_delta_percent = (
-                    (first_exchange_previous_ask - first_exchange_last_ask) / first_exchange_previous_ask * 100
-                )
-                second_exchange_delta_percent = (
-                    (second_exchange_previous_bid - second_exchange_last_bid) / second_exchange_previous_bid * 100
-                )
-                position_side = 'short'
-            if 'position_side' in locals():
-                spread_percent = (
-                    (second_exchange_last_ask - second_exchange_last_bid) / second_exchange_last_bid * 100
-                )
-                min_delta_percent = 2 * strategy.fee_percent + spread_percent + strategy.target_profit
-                delta_percent = first_exchange_delta_percent - second_exchange_delta_percent
-                if delta_percent >= min_delta_percent:
-                    logger.info(
-                        f'Second condition for {position_side} position met '
-                        f'{delta_percent=:.5f} >= {min_delta_percent=}',
-                        extra=strategy.extra_log
-                    )
-                    logger.warning(f'Open {position_side} position', extra=strategy.extra_log)
-                else:
-                    logger.debug(
-                        f'Second condition for {position_side} position not met '
-                        f'{delta_percent=:.5f} < {min_delta_percent=}',
-                        extra=strategy.extra_log
-                    )
+            position = strategy.positions.filter(symbol__symbol=symbol, is_open=True).last()
+            if position:
+                watch_position(strategy, position)
+                return
+            condition_met, position_side, prices = check_price_condition(strategy, symbol)
+            if condition_met:
+                open_position(strategy, symbol, position_side, prices)
     except AcquireLockException:
         logger.debug('Task is already running', extra=strategy.extra_log)
     except Exception as e:
         logger.exception(e, extra=strategy.extra_log)
+        raise e
+
+
+class WebSocketOrders():
+    def __new__(cls, *args, **kwargs):
+        if not hasattr(cls, 'instance'):
+            cls.instance = super().__new__(cls)
+        return cls.instance
+
+    def __init__(self, account: Account) -> None:
+        self.is_run = False
+        self.ws = websocket.WebSocket()
+        self._run_forever_thread = None
+        self._threads = []
+        self.account = account
+        production_url = 'wss://ws.okx.com:8443/ws/v5/private'
+        demo_trading_url = 'wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999'
+        self.url = demo_trading_url if account.testnet else production_url
+        self._handlers = []
+
+    def _get_login_subscribe(self) -> dict:
+        ts = str(int(time.time()))
+        sign = ts + 'GET' + '/users/self/verify'
+        mac = hmac.new(
+            bytes(self.account.api_secret, encoding='utf8'),
+            bytes(sign, encoding='utf-8'),
+            digestmod='sha256'
+        )
+        sign = base64.b64encode(mac.digest()).decode(encoding='utf-8')
+        login = {
+            'op': 'login',
+            'args': [{
+                'apiKey': self.account.api_key,
+                'passphrase': self.account.api_passphrase,
+                'timestamp': ts,
+                'sign': sign
+            }]
+        }
+        return login
+
+    def _get_orders_subscribe(self) -> dict:
+        return {
+            'op': 'subscribe',
+            'args': [{
+                'channel': 'orders',
+                'instType': 'SWAP'
+            }]
+        }
+
+    def _connect(self):
+        self.ws.connect(self.url)
+        logger.info(f'Connected to {self.url}')
+
+    def _login(self):
+        self.ws.send(json.dumps(self._get_login_subscribe()))
+
+    def _subscribe_orders(self):
+        self.ws.send(json.dumps(self._get_orders_subscribe()))
+        logger.info('Subscribed to orders')
+
+    def ping(self):
+        while self.is_run and self._threads[0].is_alive():
+            try:
+                if not self.ws.connected:
+                    logger.debug('Socket is not connected')
+                    continue
+                self.ws.send('ping')
+                logger.debug('Ping sent')
+            except Exception as e:
+                logger.error(f'Ping error: {e}')
+                continue
+            finally:
+                time.sleep(15)
+        else:
+            logger.debug('Ping stopped')
+
+    def message_handler(self, message: str) -> None | dict:
+        if message == 'pong':
+            logger.debug('Pong received')
+            return
+        try:
+            message = json.loads(message)
+        except json.decoder.JSONDecodeError:
+            return
+        event = message.get('event')
+        data = message.get('data')
+        if event == 'error':
+            logger.error(message)
+        elif event == 'subscribe':
+            logger.info(f'Subscribe {message}')
+        elif event == 'login':
+            logger.info(f'Logged in to account: {self.account.name}')
+            self._subscribe_orders()
+        elif data:
+            return data
+
+    def run_forever(self) -> None:
+        while self.is_run:
+            try:
+                self._connect()
+                self._login()
+                while self.is_run:
+                    message = self.ws.recv()
+                    data = self.message_handler(message)
+                    if data:
+                        logger.debug(data)
+                        for handler in self._handlers:
+                            handler(self.account.id, data[0])
+            except WebSocketConnectionClosedException:
+                logger.warning('Connection closed')
+            except WebSocketException as e:
+                logger.exception(e)
+                self.ws.close()
+            finally:
+                time.sleep(3)
+        else:
+            self.ws.close()
+            logger.info('WebSocket connection is closed')
+
+    def launch(self):
+        run_forever_thread = threading.Thread(
+            target=self.run_forever, daemon=True, name=f'run_forever_{self.account.id}')
+        run_forever_thread.start()
+        self._threads.append(run_forever_thread)
+        ping_thread = threading.Thread(target=self.ping, daemon=True)
+        ping_thread.start()
+        self._threads.append(ping_thread)
+        logger.info('WebSocketOrders is started')
+
+    def start(self):
+        if self.is_run:
+            logger.warning('WebSocketOrders is already running')
+            return
+        self.is_run = True
+        self.launch()
+
+    def stop(self):
+        self.is_run = False
+        logger.warning('WebSocketOrders is stopped')
+
+    def _kill(self):
+        for thread in self._threads:
+            thread_id = ctypes.c_long(thread.ident)
+            res = ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, ctypes.py_object(SystemExit))
+            if res == 0:
+                raise ValueError('Nonexistent thread id')
+            elif res > 1:
+                ctypes.pythonapi.PyThreadState_SetAsyncExc(thread_id, 0)
+                raise SystemError('PyThreadState_SetAsyncExc failed')
+            logger.info(f'Thread {thread} is killed')
+
+    def add_handler(self, callback: Callable[[int, dict], None]) -> None:
+        self._handlers.append(callback)
+
+
+@app.task
+def run_websocket_orders() -> None:
+    try:
+        with TaskLock('task_run_websocket_orders'):
+            threads = {i.name: i for i in threading.enumerate()}
+            accounts = Account.objects.filter(exchange='okx').all()
+            if not accounts:
+                logger.debug('No okx accounts found')
+                return
+            for account in accounts:
+                name = f'run_forever_{account.id}'
+                if name in threads:
+                    thread = threads[name]
+                    if thread.is_alive():
+                        logger.debug(f'WebSocketOrders is already running for account: {account.name}')
+                        continue
+                    else:
+                        logger.debug(f'WebSocketOrders is exist but not running for account: {account.name}')
+                        thread._kill()
+                ws_orders = WebSocketOrders(account)
+                ws_orders.start()
+                ws_orders.add_handler(save_filled_limit_order_id)
+                time.sleep(3)
+    except AcquireLockException:
+        logger.debug('Task run_websocket_orders is already running')
+    except Exception as e:
+        logger.exception(e)
         raise e

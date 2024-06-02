@@ -1,5 +1,5 @@
 function disableInput(element) {
-    element.value = 0;
+    // element.value = 0;
     element.disabled = true;
 }
 

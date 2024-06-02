@@ -29,7 +29,7 @@ DEBUG = bool(int(os.environ.get('DJANGO_DEBUG', 0)))
 
 ALLOWED_HOSTS = ['*']
 
-CSRF_TRUSTED_ORIGINS = ['http://*', 'http://37.27.9.209:8080']
+CSRF_TRUSTED_ORIGINS = ['http://*', 'http://37.27.9.209:8000']
 
 INTERNAL_IPS = ['127.0.0.1',]
 

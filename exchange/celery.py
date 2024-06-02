@@ -24,31 +24,31 @@ app.conf.update(
         'binance_okx.tasks.update_binance_ask_bid_price': {'queue': 'default'},
         'binance_okx.tasks.update_okx_ask_bid_price': {'queue': 'default'},
         'binance_okx.tasks.update_okx_market_price': {'queue': 'default'},
-        # 'binance_okx.tasks.update_okx_positions': {'queue': 'default'},
-        'binance_okx.tasks.check_if_position_is_closed': {'queue': 'default'},
+        'binance_okx.tasks.check_if_position_is_closed': {'queue': 'position'},
         'binance_okx.tasks.run_strategy': {'queue': 'strategy'},
-        'binance_okx.tasks.strategy_for_symbol': {'queue': 'strategy'}
+        'binance_okx.tasks.strategy_for_symbol': {'queue': 'strategy'},
+        'binance_okx.tasks.run_websocket_orders': {'queue': 'websocket'}
     },
     beat_schedule={
-        # 'okx_positions': {
-        #     'task': 'binance_okx.tasks.update_okx_positions',
-        #     'schedule': 3,
-        # },
+        'run_websocket_orders': {
+            'task': 'binance_okx.tasks.run_websocket_orders',
+            'schedule': crontab(minute='*/5'),
+        },
         'check_if_position_is_closed': {
             'task': 'binance_okx.tasks.check_if_position_is_closed',
             'schedule': 5,
         },
         'okx_market_price': {
             'task': 'binance_okx.tasks.update_okx_market_price',
-            'schedule': 2,
+            'schedule': 5,
         },
         'okx_ask_bid_price': {
             'task': 'binance_okx.tasks.update_okx_ask_bid_price',
-            'schedule': 2,
+            'schedule': 5,
         },
         'binance_ask_bid_price': {
             'task': 'binance_okx.tasks.update_binance_ask_bid_price',
-            'schedule': 2,
+            'schedule': 5,
         },
         'update_symbols': {
             'task': 'binance_okx.tasks.update_symbols',

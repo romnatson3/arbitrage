@@ -1,6 +1,6 @@
 services:
 ######################## admin
-  exchange:
+  web:
     image: exchange:latest
     deploy:
       mode: replicated
@@ -23,7 +23,7 @@ services:
       driver: syslog
       options:
         tag: exchange_web
-        syslog-facility: local7
+        syslog-facility: local5
 ######################## nginx
   nginx:
     image: nginx:latest
@@ -32,16 +32,11 @@ services:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - exchange_static:/app/static:ro
     ports:
-      - "80:80"
+      - "8000:80"
     depends_on:
-      - exchange
+      - web
     networks:
       - layer
-    logging:
-      driver: syslog
-      options:
-        tag: exchange_nginx
-        syslog-facility: local7
 ######################## postgres
   postgres:
     image: postgres:latest
@@ -49,11 +44,6 @@ services:
       - .env
     volumes:
       - exchange_postgres:/var/lib/postgresql/data
-    logging:
-      driver: syslog
-      options:
-        tag: exchange_postgres
-        syslog-facility: local7
     networks:
       - layer
 ######################## redis
@@ -62,11 +52,6 @@ services:
     entrypoint: redis-server --appendonly yes --maxmemory-policy volatile-ttl --aof-use-rdb-preamble yes --save "" --maxclients 65000
     volumes:
       - exchange_redis:/data
-    logging:
-      driver: syslog
-      options:
-        tag: exchange_redis
-        syslog-facility: local7
     networks:
       - layer
 ######################## flower
@@ -77,7 +62,7 @@ services:
     env_file:
       - .env
     ports:
-      - "51452:5555"
+      - "51455:5555"
     depends_on:
       - redis
     networks:
@@ -93,9 +78,11 @@ services:
     depends_on:
       - redis
       - postgres
-      - bybit
-      - bybit_strategy
       - default
+      - position
+      - strategy
+      - websocket
+      - web
     env_file:
       - .env
     networks:
@@ -104,11 +91,11 @@ services:
       driver: syslog
       options:
         tag: exchange_scheduler
-        syslog-facility: local7
+        syslog-facility: local5
 ######################## queue default
   default:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 2 -l INFO -Q default
+    entrypoint: celery -A exchange worker -c 5 -l INFO -Q default
     deploy:
       mode: replicated
       replicas: 1
@@ -116,6 +103,7 @@ services:
     depends_on:
       - redis
       - postgres
+      - web
     env_file:
       - .env
     networks:
@@ -124,11 +112,11 @@ services:
       driver: syslog
       options:
         tag: exchange_default
-        syslog-facility: local7
-######################## queue bybit
-  bybit:
+        syslog-facility: local5
+######################## queue position
+  position:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 15 -l INFO -Q bybit
+    entrypoint: celery -A exchange worker -c 5 -l INFO -Q position
     deploy:
       mode: replicated
       replicas: 1
@@ -136,6 +124,7 @@ services:
     depends_on:
       - redis
       - postgres
+      - web
     env_file:
       - .env
     networks:
@@ -143,20 +132,20 @@ services:
     logging:
       driver: syslog
       options:
-        tag: exchange_bybit
-        syslog-facility: local7
-######################## queue bybit_strategy
-  bybit_strategy:
+        tag: exchange_position
+        syslog-facility: local5
+######################## queue strategy
+  strategy:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 15 -l INFO -Q bybit_strategy
+    entrypoint: celery -A exchange worker -c 10 -l INFO -Q strategy
     deploy:
       mode: replicated
-      replicas: 2
+      replicas: 5
     restart: always
     depends_on:
       - redis
       - postgres
-      - bybit
+      - web
     env_file:
       - .env
     networks:
@@ -164,8 +153,29 @@ services:
     logging:
       driver: syslog
       options:
-        tag: exchange_bybit_strategy
-        syslog-facility: local7
+        tag: exchange_strategy
+        syslog-facility: local5
+######################## queue websocket
+  websocket:
+    image: exchange:latest
+    entrypoint: celery -A exchange worker -c 2 -l INFO -Q websocket
+    deploy:
+      mode: replicated
+      replicas: 1
+    restart: always
+    depends_on:
+      - redis
+      - postgres
+      - web
+    env_file:
+      - .env
+    networks:
+      - layer
+    logging:
+      driver: syslog
+      options:
+        tag: exchange_websocket
+        syslog-facility: local5
 
 volumes:
   exchange_postgres:
