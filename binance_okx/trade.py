@@ -1,7 +1,6 @@
 import logging
 import time
 from django.utils import timezone
-from django.core.cache import cache
 from types import SimpleNamespace as Namespace
 import okx.Trade as Trade
 import okx.Account as Account
@@ -12,7 +11,7 @@ from .exceptions import (
     CancelOrderException, ClosePositionException, GetExecutionException
 )
 from .misc import convert_dict_values
-from .helper import CachePrice, CacheOrderId
+from .helper import CachePrice, CacheOkxOrderId
 
 
 logger = logging.getLogger(__name__)
@@ -63,7 +62,10 @@ class OkxTrade():
         if result['code'] != '0':
             raise PlaceOrderException(result)
         order_id = result['data'][0]['ordId']
-        logger.info(f'Opened {position_side} position, {order_id=}', extra=self.strategy.extra_log)
+        logger.info(
+            f'Opened {position_side} position, {position_size=}, {sz=}, {order_id=}',
+            extra=self.strategy.extra_log
+        )
         position: dict = self.get_position()
         position: Position = self._save_position(position)
         executions: list[dict] = self.get_executions(order_id)
@@ -206,7 +208,7 @@ class OkxTrade():
             slTriggerPxType='mark'
         )
         if result['code'] != '0':
-            raise PlaceOrderException(result['data'][0]['sMsg'])
+            raise PlaceOrderException(result)
         order_id = result['data'][0]['algoId']
         logger.info(f'Placed stop loss {price} {order_id=}', extra=self.strategy.extra_log)
         return order_id
@@ -232,7 +234,7 @@ class OkxTrade():
             tpTriggerPxType='mark'
         )
         if result['code'] != '0':
-            raise PlaceOrderException(result['data'][0]['sMsg'])
+            raise PlaceOrderException(result)
         order_id = result['data'][0]['algoId']
         logger.info(f'Placed take profit {price} {order_id=}', extra=self.strategy.extra_log)
         return order_id
@@ -264,7 +266,7 @@ class OkxTrade():
             tpTriggerPxType='mark'
         )
         if result['code'] != '0':
-            raise PlaceOrderException(result['data'][0]['sMsg'])
+            raise PlaceOrderException(result)
         order_id = result['data'][0]['algoId']
         logger.info(
             f'Placed {stop_loss_price=} {take_profit_price=} {order_id=}',
@@ -303,7 +305,7 @@ class OkxTrade():
             px=price
         )
         if result['code'] != '0':
-            raise PlaceOrderException(result['data'][0]['sMsg'])
+            raise PlaceOrderException(result)
         order_id = result['data'][0]['ordId']
         logger.info(f'Placed limit order {sz=} {price=} {order_id=}', extra=self.strategy.extra_log)
         return order_id
@@ -430,20 +432,22 @@ def get_stop_loss_breakeven(entry_price: float, fee_percent: float, spread_perce
     return round(stop_loss_price, 5)
 
 
-def check_price_condition(strategy: Strategy, symbol: str) -> tuple[bool, str, dict]:
+def check_price_condition(strategy: Strategy, symbol: Symbol) -> tuple[bool, str, dict]:
     position_side = None
     delta_percent = None
+    delta_points = None
+    spread_points = None
     condition_met = False
     first_exchange = CachePrice(strategy.first_account.exchange)
     second_exchange = CachePrice(strategy.second_account.exchange)
-    second_exchange_previous_ask = second_exchange.get_ask_previous_price(symbol)
-    second_exchange_previous_bid = second_exchange.get_bid_previous_price(symbol)
-    second_exchange_last_ask = second_exchange.get_ask_last_price(symbol)
-    second_exchange_last_bid = second_exchange.get_bid_last_price(symbol)
-    first_exchange_previous_ask = first_exchange.get_ask_previous_price(symbol)
-    first_exchange_previous_bid = first_exchange.get_bid_previous_price(symbol)
-    first_exchange_last_ask = first_exchange.get_ask_last_price(symbol)
-    first_exchange_last_bid = first_exchange.get_bid_last_price(symbol)
+    second_exchange_previous_ask = second_exchange.get_ask_previous_price(symbol.symbol)
+    second_exchange_previous_bid = second_exchange.get_bid_previous_price(symbol.symbol)
+    second_exchange_last_ask = second_exchange.get_ask_last_price(symbol.symbol)
+    second_exchange_last_bid = second_exchange.get_bid_last_price(symbol.symbol)
+    first_exchange_previous_ask = first_exchange.get_ask_previous_price(symbol.symbol)
+    first_exchange_previous_bid = first_exchange.get_bid_previous_price(symbol.symbol)
+    first_exchange_last_ask = first_exchange.get_ask_last_price(symbol.symbol)
+    first_exchange_last_bid = first_exchange.get_bid_last_price(symbol.symbol)
     if second_exchange_previous_ask < first_exchange_previous_ask:
         logger.debug(
             'First condition for long position met '
@@ -473,20 +477,25 @@ def check_price_condition(strategy: Strategy, symbol: str) -> tuple[bool, str, d
     spread_percent = (
         (second_exchange_last_ask - second_exchange_last_bid) / second_exchange_last_bid * 100
     )
+    spread_points = (second_exchange_last_ask - second_exchange_last_bid) / symbol.okx.tick_size
     if position_side:
         min_delta_percent = 2 * strategy.fee_percent + spread_percent + strategy.target_profit
         delta_percent = first_exchange_delta_percent - second_exchange_delta_percent
+        if position_side == 'long':
+            delta_points = (first_exchange_last_bid - second_exchange_last_ask) / symbol.okx.tick_size
+        if position_side == 'short':
+            delta_points = (first_exchange_last_ask - second_exchange_last_bid) / symbol.okx.tick_size
         if delta_percent >= min_delta_percent:
             condition_met = True
             logger.info(
                 f'Second condition for {position_side} position met '
-                f'{delta_percent=:.5f} >= {min_delta_percent=}',
+                f'{delta_percent=:.10f} >= {min_delta_percent=:.10f}',
                 extra=strategy.extra_log
             )
         else:
             logger.debug(
                 f'Second condition for {position_side} position not met '
-                f'{delta_percent=:.5f} < {min_delta_percent=}',
+                f'{delta_percent=:.10f} < {min_delta_percent=:.10f}',
                 extra=strategy.extra_log
             )
     prices = dict(
@@ -494,19 +503,23 @@ def check_price_condition(strategy: Strategy, symbol: str) -> tuple[bool, str, d
         first_exchange_last_ask=first_exchange_last_ask,
         second_exchange_last_bid=second_exchange_last_bid,
         second_exchange_last_ask=second_exchange_last_ask,
-        spread_percent=round(spread_percent, 5),
-        delta_percent=round(delta_percent, 5) if delta_percent else None
+        spread_points=spread_points,
+        spread_percent=spread_percent,
+        delta_points=delta_points,
+        delta_percent=delta_percent
     )
     return condition_met, position_side, prices
 
 
-def open_position(strategy: Strategy, symbol: str, position_side: str, prices: dict) -> None:
-    symbol = Symbol.objects.get(symbol=symbol)
+def open_position(strategy: Strategy, symbol: Symbol, position_side: str, prices: dict) -> None:
     funding_time = symbol.okx.funding_time
     edge_time = funding_time - timezone.timedelta(minutes=strategy.time_to_funding)
     if timezone.localtime() > edge_time:
         logger.warning(f'Funding time {funding_time} is too close', extra=strategy.extra_log)
-        if strategy.only_profit:
+        if not strategy.only_profit:
+            logger.warning('Only profit mode is disabled. Skip', extra=strategy.extra_log)
+            return
+        else:
             funding_rate = symbol.okx.funding_rate
             if (funding_rate > 0 and position_side == 'long') or (funding_rate < 0 and position_side == 'short'):
                 logger.warning(
@@ -522,6 +535,18 @@ def open_position(strategy: Strategy, symbol: str, position_side: str, prices: d
     logger.info(f'Opening {position_side} position', extra=strategy.extra_log)
     trade = OkxTrade(strategy, symbol, position_side)
     position = trade.open_position()
+    position.ask_bid_data.update(
+        bid_first_exchange=prices['first_exchange_last_bid'],
+        ask_first_exchange=prices['first_exchange_last_ask'],
+        bid_second_exchange=prices['second_exchange_last_bid'],
+        ask_second_exchange=prices['second_exchange_last_ask'],
+        spread_points=prices['spread_points'],
+        spread_percent=prices['spread_percent'],
+        delta_points=prices['delta_points'],
+        delta_percent=prices['delta_percent']
+    )
+    position.save(update_fields=['ask_bid_data'])
+    logger.info(f'Updated first ask_bid_data for position "{position}"', extra=strategy.extra_log)
     if strategy.close_position_parts:
         take_profit_grid = get_take_profit_grid(
             strategy, position.entry_price, prices['spread_percent'], position_side)
@@ -557,24 +582,18 @@ def open_position(strategy: Strategy, symbol: str, position_side: str, prices: d
             position.entry_price, strategy.fee_percent, prices['spread_percent'], position_side
         )
     logger.info(f'Updated sl_tp_data for position "{position}"', extra=strategy.extra_log)
-    position.ask_bid_data.update(
-        bid_first_exchange=prices['first_exchange_last_bid'],
-        ask_first_exchange=prices['first_exchange_last_ask'],
-        bid_second_exchange=prices['second_exchange_last_bid'],
-        ask_second_exchange=prices['second_exchange_last_ask'],
-        spread_percent=prices['spread_percent'],
-        delta_percent=prices['delta_percent']
-    )
     _, _, prices_entry = check_price_condition(strategy, symbol)
     position.ask_bid_data.update(
         bid_first_exchange_entry=prices_entry['first_exchange_last_bid'],
         ask_first_exchange_entry=prices_entry['first_exchange_last_ask'],
         bid_second_exchange_entry=prices_entry['second_exchange_last_bid'],
         ask_second_exchange_entry=prices_entry['second_exchange_last_ask'],
+        spread_points_entry=prices_entry['spread_points'],
         spread_percent_entry=prices_entry['spread_percent'],
+        delta_points_entry=prices_entry['delta_points'],
         delta_percent_entry=prices_entry['delta_percent']
     )
-    logger.info(f'Updated ask_bid_data for position "{position}"', extra=strategy.extra_log)
+    logger.info(f'Updated second ask_bid_data for position "{position}"', extra=strategy.extra_log)
     position.save()
 
 
@@ -606,7 +625,7 @@ def watch_position(strategy: Strategy, position: Position) -> None:
         sl_tp_data = Namespace(**position.sl_tp_data)
         if strategy.close_position_type == 'limit':
             if not sl_tp_data.first_part_closed:
-                cache_orders_ids = CacheOrderId(strategy.second_account.id, position.symbol.okx.inst_id)
+                cache_orders_ids = CacheOkxOrderId(strategy.second_account.id, position.symbol.okx.inst_id)
                 if sl_tp_data.tp_first_limit_order_id in cache_orders_ids.get_orders():
                     logger.info(
                         f'First take profit limit order {sl_tp_data.tp_first_limit_order_id} is filled',

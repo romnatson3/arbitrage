@@ -24,6 +24,18 @@ services:
       options:
         tag: exchange_web
         syslog-facility: local5
+################################ rabitmq
+  rabbitmq:
+    image: rabbitmq:management
+    env_file:
+      - .env
+    volumes:
+      - exchange_rabbitmq:/var/lib/rabbitmq
+    ports:
+      - "38445:15672"
+      - "38692:15692"
+    networks:
+      - layer
 ######################## nginx
   nginx:
     image: nginx:latest
@@ -140,7 +152,7 @@ services:
     entrypoint: celery -A exchange worker -c 10 -l INFO -Q strategy
     deploy:
       mode: replicated
-      replicas: 5
+      replicas: 1
     restart: always
     depends_on:
       - redis
@@ -181,6 +193,7 @@ volumes:
   exchange_postgres:
   exchange_redis:
   exchange_static:
+  exchange_rabbitmq:
 
 networks:
   layer:

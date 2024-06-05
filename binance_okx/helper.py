@@ -111,7 +111,7 @@ class CachePrice():
         return self._get_bid(symbol)[1]
 
 
-class CacheOrderId():
+class CacheOkxOrderId():
     def __init__(self, account_id: int, inst_id: str) -> None:
         self.conection = get_redis_connection('default')
         self.pipeline = self.conection.pipeline()

@@ -120,6 +120,10 @@ class OkxSymbol(BaseModel):
         return float(self.data['ctVal'])
 
     @property
+    def tick_size(self) -> float:
+        return float(self.data['tickSz'])
+
+    @property
     def market_price(self) -> float:
         return cache.get(f'okx_market_price_{self.symbol}', 0.0)
 

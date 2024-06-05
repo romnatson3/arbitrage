@@ -165,10 +165,14 @@ def check_if_position_is_closed() -> None:
                         f'{", ".join(sorted(list(open_positions_ex)))}'
                     )
                     last_execution = Execution.objects.order_by('bill_id').last()
-                    result = client.get_account_bills(
-                        instType='SWAP', mgnMode='isolated', type=2,
-                        before=last_execution.bill_id
-                    )
+                    if not last_execution:
+                        logger.debug('No found any executions in database')
+                        result = client.get_account_bills(instType='SWAP', mgnMode='isolated', type=2)
+                    else:
+                        result = client.get_account_bills(
+                            instType='SWAP', mgnMode='isolated', type=2,
+                            before=last_execution.bill_id
+                        )
                     if result['code'] != '0':
                         raise GetExecutionException(result['data'][0]['sMsg'])
                     all_executions = [convert_dict_values(i) for i in result['data']]
@@ -248,9 +252,10 @@ def run_strategy(strategy_id: int) -> None:
 def strategy_for_symbol(strategy_id: int, symbol: str) -> None:
     try:
         strategy = Strategy.objects.cache(id=strategy_id)[0]
-        strategy._extra_log.update(symbol=symbol)
-        with TaskLock(f'task_strategy_{strategy_id}_{symbol}'):
-            position = strategy.positions.filter(symbol__symbol=symbol, is_open=True).last()
+        symbol = Symbol.objects.get(symbol=symbol)
+        strategy._extra_log.update(symbol=symbol.symbol)
+        with TaskLock(f'task_strategy_{strategy_id}_{symbol.symbol}'):
+            position = strategy.positions.filter(symbol=symbol, is_open=True).last()
             if position:
                 watch_position(strategy, position)
                 return

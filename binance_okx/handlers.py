@@ -1,12 +1,12 @@
 import logging
-from .helper import CacheOrderId
+from .helper import CacheOkxOrderId
 
 
 logger = logging.getLogger(__name__)
 
 
 def save_filled_limit_order_id(account_id: int, data: dict) -> None:
-    cache_orders_ids = CacheOrderId(account_id, data['instId'])
+    cache_orders_ids = CacheOkxOrderId(account_id, data['instId'])
     if not data['ordType'] == 'limit':
         logger.info(f'Order {data["ordId"]} is not limit')
         return

@@ -8,3 +8,4 @@ media/
 .vimspector.json
 .vimspector.session
 dumps/
+ws_async.py

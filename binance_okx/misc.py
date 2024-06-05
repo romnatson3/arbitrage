@@ -108,7 +108,7 @@ def get_client_ip(request) -> str:
 def convert_dict_values(data: dict) -> dict[str, str | int | float]:
     for k, v in data.items():
         if isinstance(v, str):
-            if re.search(r'^(?!.*:)\d+\.\d+$', v):
+            if re.search(r'^(?!.*:)[+-]?\d+\.\d+$', v):
                 data[k] = round(float(v), 10)
             elif re.search(r'^[-+]?\d+$', v):
                 data[k] = int(v)
