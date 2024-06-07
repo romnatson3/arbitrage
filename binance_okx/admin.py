@@ -11,8 +11,7 @@ from django.http import HttpResponse
 from io import StringIO
 from .forms import CustomUserCreationForm, CustomUserChangeForm
 from .models import (
-    StatusLog, Account, Candle, OkxSymbol, BinanceSymbol, OkxCandle, BinanceCandle,
-    Strategy, Symbol, Position, Execution
+    StatusLog, Account, OkxSymbol, BinanceSymbol, Strategy, Symbol, Position, Execution
 )
 from .misc import get_pretty_dict, get_pretty_text, sort_data
 from .helper import calc
@@ -188,37 +187,6 @@ class OkxSymbolAdmin(admin.ModelAdmin):
         return queryset, use_distinct
 
 
-class CandleAdmin(admin.ModelAdmin):
-    list_display = ('symbol', 'time_frame', 'updated_at')
-    search_fields = ('symbol', 'time_frame')
-    fields = ('symbol', 'time_frame', 'pretty_data', 'updated_at')
-    ordering = ('-created_at',)
-    readonly_fields = ('symbol', 'time_frame', 'pretty_data', 'updated_at')
-
-    def has_delete_permission(self, request, obj=None):
-        return False
-
-    def has_add_permission(self, request):
-        return False
-
-    def has_change_permission(self, request, obj=None):
-        return False
-
-    @admin.display(description='Candles data')
-    def pretty_data(self, obj) -> str:
-        return get_pretty_dict(obj.data)
-
-
-# @admin.register(BinanceCandle)
-# class BinanceCandleAdmin(CandleAdmin):
-#     pass
-
-
-# @admin.register(OkxCandle)
-# class OkxCandleAdmin(CandleAdmin):
-#     pass
-
-
 @admin.register(Strategy)
 class StrategyAdmin(admin.ModelAdmin):
     class Media:
@@ -281,7 +249,8 @@ class StrategyAdmin(admin.ModelAdmin):
 class PositionAdmin(admin.ModelAdmin):
     list_display = (
         'id', 'is_open', 'strategy', '_position_side', 'mode', 'symbol',
-        '_position_id', '_trade_id', '_contract', '_amount', 'updated_at'
+        '_position_id', '_trade_id', '_contract', '_amount', '_time_to_close',
+        'updated_at'
     )
     fields = (
         'id', 'is_open', 'strategy', 'symbol', 'mode', '_position_data', '_sl_tp_data',
@@ -346,6 +315,10 @@ class PositionAdmin(admin.ModelAdmin):
     def _position_side(self, obj) -> str:
         return obj.position_data.get('posSide', '')
 
+    @admin.display(description='Time to close')
+    def _time_to_close(self, obj) -> str:
+        return obj.strategy.time_to_close
+
     @admin.action(description='Export CSV')
     def export_csv_action(self, request, queryset):
         f = StringIO()
@@ -361,7 +334,10 @@ class PositionAdmin(admin.ModelAdmin):
             'Спред біржа №2 в % (вхід)', 'Обсяг в USDT', 'Ціна',
             'Час закриття', 'Тривалість угоди в мілісекундах', 'Комісія', 'Прибуток'
         ])
-        executions = Execution.objects.filter(position__in=queryset).order_by('position__id', 'trade_id').all()
+        executions = (
+            Execution.objects.filter(position__in=queryset)
+            .order_by('position__id', '-data__subType', 'trade_id').all()
+        )
         for execution in executions:
             ask_bid_data = Namespace(**execution.position.ask_bid_data)
             data = Namespace(**execution.data)

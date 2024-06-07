@@ -58,7 +58,7 @@ class OkxTrade():
         if result['code'] != '0':
             raise PlaceOrderException(result)
         order_id = result['data'][0]['ordId']
-        logger.info(
+        logger.warning(
             f'Opened {position_side} position, {position_size=}, {sz=}, {order_id=}',
             extra=self.strategy.extra_log
         )
@@ -139,7 +139,7 @@ class OkxTrade():
         if result['code'] != '0':
             raise PlaceOrderException(result)
         order_id = result['data'][0]['ordId']
-        logger.info(
+        logger.warning(
             f'Closed {position_side} position partially {size_usdt=} {order_id=}',
             extra=self.strategy.extra_log
         )
@@ -162,7 +162,7 @@ class OkxTrade():
                 f'Failed to close {position_side} position. {result["msg"]}'
             )
         else:
-            logger.info(f'Closed {position_side} position', extra=self.strategy.extra_log)
+            logger.warning(f'Closed {position_side} position', extra=self.strategy.extra_log)
 
     def get_position(self, symbol: OkxSymbol = None) -> dict:
         if not symbol:
@@ -386,7 +386,7 @@ class OkxEmulateTrade():
         self.symbol = symbol
 
     def create_position(self, position_side: str) -> Position:
-        logger.info(
+        logger.warning(
             f'Creating virtual {position_side} position, size {self.strategy.position_size} usdt',
             extra=self.strategy.extra_log
         )
@@ -407,20 +407,22 @@ class OkxEmulateTrade():
         return position
 
     def close_position(self, position: Position, size_usdt: float) -> None:
-        if size_usdt >= self.strategy.position_size:
-            size_usdt = self.strategy.position_size
+        sz = calc.get_sz(size_usdt, self.symbol.okx)
+        if sz >= position.position_data['pos']:
+            sz = position.position_data['pos']
+            base_coin = calc.get_base_coin_from_sz(sz, self.symbol.okx.ct_val)
+            size_usdt = base_coin * self.symbol.okx.market_price
             position.is_open = False
             position.save(update_fields=['is_open'])
-            logger.info(
+            logger.warning(
                 f'Virtual position "{position}" is closed completely {size_usdt=}',
                 extra=self.strategy.extra_log
             )
         else:
-            logger.info(
+            logger.warning(
                 f'Virtual position "{position}" is closed partially {size_usdt=}',
                 extra=self.strategy.extra_log
             )
-            sz = calc.get_sz(size_usdt, self.symbol.okx)
             position.position_data['pos'] -= sz
             position.save(update_fields=['position_data'])
         self._create_close_execution(position, size_usdt)
@@ -471,6 +473,12 @@ class OkxEmulateTrade():
         Execution.objects.create(
             position=position, trade_id=str(uuid.uuid4()).split('-')[-1],
             bill_id=str(uuid.uuid4()).split('-')[-1], data=execution_data
+        )
+        logger.info(
+            f'Created virtual {execution_data["subType"]} execution, '
+            f'sz={execution_data["sz"]}, px={execution_data["px"]}, '
+            f'fee={execution_data["fee"]}, pnl={execution_data["pnl"]}',
+            extra=self.strategy.extra_log
         )
 
 

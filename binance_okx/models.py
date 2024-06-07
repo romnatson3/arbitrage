@@ -168,43 +168,6 @@ class Symbol(BaseModel):
         return self.symbol
 
 
-class Candle(BaseModel):
-    class Meta:
-        abstract = True
-        verbose_name = 'Candle'
-        verbose_name_plural = 'Candles'
-        unique_together = ('symbol', 'time_frame')
-
-    symbol = models.ForeignKey('Symbol', on_delete=models.CASCADE, related_name='candles', help_text='Symbol')
-    time_frame = models.CharField('interval', max_length=10, help_text='Interval')
-    data = models.JSONField(default=list, help_text='Candles data')
-
-    def __str__(self):
-        return f'{self.symbol} - {self.time_frame}'
-
-
-class BinanceCandle(Candle):
-    class Meta:
-        verbose_name = 'Binance Candle'
-        verbose_name_plural = 'Binance Candles'
-
-    symbol = models.ForeignKey('BinanceSymbol', on_delete=models.CASCADE, related_name='candles', help_text='Binance Symbol')
-
-    def __str__(self):
-        return f'Binance {self.symbol} - {self.time_frame}'
-
-
-class OkxCandle(Candle):
-    class Meta:
-        verbose_name = 'OKX Candle'
-        verbose_name_plural = 'OKX Candles'
-
-    symbol = models.ForeignKey('OkxSymbol', on_delete=models.CASCADE, related_name='candles', help_text='OKX Symbol')
-
-    def __str__(self):
-        return f'OKX {self.symbol} - {self.time_frame}'
-
-
 class StrategyManager(models.Manager):
     def get_queryset(self) -> QuerySet:
         return (

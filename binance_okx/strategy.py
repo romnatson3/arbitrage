@@ -153,7 +153,7 @@ def watch_trade_position(strategy: Strategy, position: Position) -> None:
             if not sl_tp_data.first_part_closed:
                 cache_orders_ids = CacheOkxOrderId(strategy.second_account.id, position.symbol.okx.inst_id)
                 if sl_tp_data.tp_first_limit_order_id in cache_orders_ids.get_orders():
-                    logger.warning(
+                    logger.info(
                         f'First take profit limit order {sl_tp_data.tp_first_limit_order_id} is filled',
                         extra=strategy.extra_log
                     )
@@ -170,7 +170,7 @@ def watch_trade_position(strategy: Strategy, position: Position) -> None:
             if not sl_tp_data.first_part_closed:
                 if ((position.side == 'long' and market_price >= sl_tp_data.tp_first_price) or
                     (position.side == 'short' and market_price <= sl_tp_data.tp_first_price)):
-                    logger.warning(
+                    logger.info(
                         f'First take profit price {sl_tp_data.tp_first_price} reached {market_price=} '
                         f'for "{position}"',
                         extra=strategy.extra_log
@@ -192,7 +192,7 @@ def watch_trade_position(strategy: Strategy, position: Position) -> None:
             else:
                 if ((position.side == 'long' and market_price >= sl_tp_data.tp_second_price) or
                     (position.side == 'short' and market_price <= sl_tp_data.tp_second_price)):
-                    logger.warning(
+                    logger.info(
                         f'Second take profit price {sl_tp_data.tp_second_price} reached {market_price=} '
                         f'for "{position}"',
                         extra=strategy.extra_log
@@ -226,7 +226,7 @@ def watch_emulate_position(strategy: Strategy, position: Position) -> None:
     if strategy.stop_loss:
         if ((position.side == 'long' and market_price <= sl_tp_data.stop_loss_price) or
             (position.side == 'short' and market_price >= sl_tp_data.stop_loss_price)):
-                logger.warning(
+                logger.info(
                     f'Stop loss price {sl_tp_data.stop_loss_price} reached {market_price=} '
                     f'for "{position}"',
                     extra=strategy.extra_log
@@ -237,7 +237,7 @@ def watch_emulate_position(strategy: Strategy, position: Position) -> None:
         if not sl_tp_data.first_part_closed:
             if ((position.side == 'long' and market_price >= sl_tp_data.tp_first_price) or
                 (position.side == 'short' and market_price <= sl_tp_data.tp_first_price)):
-                    logger.warning(
+                    logger.info(
                         f'First take profit price {sl_tp_data.tp_first_price} reached {market_price=} '
                         f'for "{position}"',
                         extra=strategy.extra_log
@@ -253,7 +253,7 @@ def watch_emulate_position(strategy: Strategy, position: Position) -> None:
         else:
             if ((position.side == 'long' and market_price >= sl_tp_data.tp_second_price) or
                 (position.side == 'short' and market_price <= sl_tp_data.tp_second_price)):
-                    logger.warning(
+                    logger.info(
                         f'Second take profit price {sl_tp_data.tp_second_price} reached {market_price=} '
                         f'for "{position}"',
                         extra=strategy.extra_log
@@ -270,7 +270,7 @@ def watch_emulate_position(strategy: Strategy, position: Position) -> None:
         if strategy.target_profit:
             if ((position.side == 'long' and market_price >= sl_tp_data.take_profit_price) or
                 (position.side == 'short' and market_price <= sl_tp_data.take_profit_price)):
-                    logger.warning(
+                    logger.info(
                         f'Take profit price {sl_tp_data.take_profit_price} reached {market_price=} '
                         f'for "{position}"',
                         extra=strategy.extra_log
