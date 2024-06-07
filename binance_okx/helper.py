@@ -7,8 +7,15 @@ from .models import OkxSymbol
 
 class Calculator():
     def get_sz(self, quote_coin: float, symbol: OkxSymbol) -> float:
-        qty = floor(quote_coin / symbol.market_price / symbol.ct_val / symbol.lot_sz) * symbol.lot_sz
-        return round(qty, 1)
+        contract_count = (quote_coin / symbol.market_price) / symbol.ct_val
+        if contract_count < symbol.lot_sz:
+            return symbol.lot_sz
+        sz = floor(contract_count / symbol.lot_sz) * symbol.lot_sz
+        return round(sz, 1)
+
+    def get_base_coin_from_sz(self, sz: float, contract_value: float) -> float:
+        base_coin = sz * contract_value
+        return base_coin
 
     def get_stop_loss_price(self, price: float, percentage: float, position_side: str) -> float:
         if percentage <= 0:
@@ -30,9 +37,9 @@ class Calculator():
         if percentage <= 0:
             return 0
         if position_side == 'long':
-            take_profit_price = price * (1 + (percentage + 2 * fee_percent + spread_percent) / 100)
+            take_profit_price = price * (1 + (percentage + fee_percent + spread_percent) / 100)
         if position_side == 'short':
-            take_profit_price = price * (1 - (percentage + 2 * fee_percent + spread_percent) / 100)
+            take_profit_price = price * (1 - (percentage + fee_percent + spread_percent) / 100)
         return round(take_profit_price, 5)
 
 

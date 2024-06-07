@@ -12,7 +12,6 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 # from celery.utils.log import get_task_logger
-from celery.signals import worker_ready
 from binance.um_futures import UMFutures
 import okx.MarketData
 import okx.PublicData
@@ -22,7 +21,11 @@ from .helper import CachePrice, TaskLock
 from .models import Strategy, Symbol, Account, Position, Execution, StatusLog, OkxSymbol, BinanceSymbol
 from .exceptions import GetPositionException, GetExecutionException, AcquireLockException
 from .misc import convert_dict_values
-from .trade import open_position, check_price_condition, watch_position
+from .trade import get_ask_bid_prices_and_condition
+from .strategy import (
+    open_trade_position, watch_trade_position, open_emulate_position,
+    watch_emulate_position
+)
 from .handlers import save_filled_limit_order_id
 
 
@@ -138,6 +141,12 @@ def update_binance_ask_bid_price() -> None:
 
 
 @app.task
+def update_ask_bid_price() -> None:
+    update_okx_ask_bid_price.delay()
+    update_binance_ask_bid_price.delay()
+
+
+@app.task
 def check_if_position_is_closed() -> None:
     accounts = Account.objects.filter(exchange='okx').all()
     if not accounts:
@@ -147,7 +156,10 @@ def check_if_position_is_closed() -> None:
         with TaskLock('okx_task_check_if_position_is_closed'):
             for account in accounts:
                 try:
-                    open_positions_db = Position.objects.filter(is_open=True, strategy__second_account=account).all()
+                    open_positions_db = Position.objects.filter(
+                        is_open=True, mode=Strategy.Mode.trade,
+                        strategy__second_account=account
+                    ).all()
                     if not open_positions_db:
                         logger.debug(f'No found any open positions in database for account: {account.name}')
                         continue
@@ -159,10 +171,10 @@ def check_if_position_is_closed() -> None:
                     result = client.get_positions(instType='SWAP')
                     if result['code'] != '0':
                         raise GetPositionException(f'Failed to get positions data. {result["msg"]}')
-                    open_positions_ex = {i['instId']: convert_dict_values(i) for i in result['data']}
+                    open_positions = {i['instId']: convert_dict_values(i) for i in result['data']}
                     logger.info(
-                        f'Found {len(open_positions_ex)} open positions in exchange for account: {account.name}. '
-                        f'{", ".join(sorted(list(open_positions_ex)))}'
+                        f'Found {len(open_positions)} open positions in exchange for account: {account.name}. '
+                        f'{", ".join(sorted(list(open_positions)))}'
                     )
                     last_execution = Execution.objects.order_by('bill_id').last()
                     if not last_execution:
@@ -179,19 +191,23 @@ def check_if_position_is_closed() -> None:
                     for position in open_positions_db:
                         try:
                             position.strategy._extra_log.update(symbol=position.symbol.symbol)
-                            if position.symbol.okx.inst_id in open_positions_ex:
+                            if position.symbol.okx.inst_id in open_positions:
                                 logger.debug(
                                     f'Position "{position}" is still open in exchange',
                                     extra=position.strategy.extra_log
                                 )
-                                if position.size != open_positions_ex[position.symbol.okx.inst_id]['availPos']:
+                                if (position.position_data['pos'] !=
+                                    open_positions[position.symbol.okx.inst_id]['pos']):
                                     logger.warning(
                                         f'Position "{position}" size is different in database and exchange',
                                         extra=position.strategy.extra_log
                                     )
-                                    position.position_data = open_positions_ex[position.symbol.okx.inst_id]
+                                    position.position_data = open_positions[position.symbol.okx.inst_id]
                                     position.save()
-                                    logger.info(f'Updated position "{position}"', extra=position.strategy.extra_log)
+                                    logger.info(
+                                        f'Updated position "{position}"',
+                                        extra=position.strategy.extra_log
+                                    )
                                 else:
                                     continue
                             else:
@@ -219,7 +235,8 @@ def check_if_position_is_closed() -> None:
                                 if Execution.sub_type.get(e['subType']):
                                     e['subType'] = Execution.sub_type[e['subType']]
                                 execution = Execution.objects.create(
-                                    position=position, bill_id=e['billId'], trade_id=e['tradeId'], data=e
+                                    position=position, bill_id=e['billId'],
+                                    trade_id=e['tradeId'], data=e
                                 )
                                 logger.info(
                                     f'Saved execution {execution.bill_id=} {execution.trade_id=}',
@@ -243,13 +260,16 @@ def run_strategy(strategy_id: int) -> None:
     try:
         strategy = Strategy.objects.cache(id=strategy_id, enabled=True, set=True)[0]
         for symbol in strategy.symbols.all():
-            strategy_for_symbol.delay(strategy.id, symbol.symbol)
+            if strategy.mode == Strategy.Mode.trade:
+                trade_strategy_for_symbol.delay(strategy.id, symbol.symbol)
+            elif strategy.mode == Strategy.Mode.emulate:
+                emulate_strategy_for_symbol.delay(strategy.id, symbol.symbol)
     except Exception as e:
         logger.exception(e, extra=strategy.extra_log)
 
 
 @app.task
-def strategy_for_symbol(strategy_id: int, symbol: str) -> None:
+def trade_strategy_for_symbol(strategy_id: int, symbol: str) -> None:
     try:
         strategy = Strategy.objects.cache(id=strategy_id)[0]
         symbol = Symbol.objects.get(symbol=symbol)
@@ -257,11 +277,33 @@ def strategy_for_symbol(strategy_id: int, symbol: str) -> None:
         with TaskLock(f'task_strategy_{strategy_id}_{symbol.symbol}'):
             position = strategy.positions.filter(symbol=symbol, is_open=True).last()
             if position:
-                watch_position(strategy, position)
+                watch_trade_position(strategy, position)
                 return
-            condition_met, position_side, prices = check_price_condition(strategy, symbol)
+            condition_met, position_side, prices = get_ask_bid_prices_and_condition(strategy, symbol)
             if condition_met:
-                open_position(strategy, symbol, position_side, prices)
+                open_trade_position(strategy, symbol, position_side, prices)
+    except AcquireLockException:
+        logger.debug('Task is already running', extra=strategy.extra_log)
+    except Exception as e:
+        logger.exception(e, extra=strategy.extra_log)
+        raise e
+
+
+@app.task
+def emulate_strategy_for_symbol(strategy_id: int, symbol: str) -> None:
+    try:
+        strategy = Strategy.objects.cache(id=strategy_id)[0]
+        symbol = Symbol.objects.get(symbol=symbol)
+        strategy._extra_log.update(symbol=symbol.symbol)
+        with TaskLock(f'task_emulate_strategy_{strategy_id}_{symbol.symbol}'):
+            position = strategy.positions.filter(symbol=symbol, is_open=True).last()
+            if position:
+                watch_emulate_position(strategy, position)
+                return
+            condition_met, position_side, prices = get_ask_bid_prices_and_condition(strategy, symbol)
+            # if condition_met:
+            if True:
+                open_emulate_position(strategy, symbol, position_side, prices)
     except AcquireLockException:
         logger.debug('Task is already running', extra=strategy.extra_log)
     except Exception as e:

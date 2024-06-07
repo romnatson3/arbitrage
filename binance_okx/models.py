@@ -304,22 +304,33 @@ class Strategy(BaseModel):
         )
 
     @property
-    def fee_percent(self) -> float:
+    def open_fee(self) -> float:
+        return self.taker_fee
+
+    @property
+    def close_fee(self) -> float:
         if self.close_position_type == 'market':
-            fee = self.taker_fee
-        else:
-            fee = self.maker_fee
-        return fee
+            close_fee = self.taker_fee
+        if self.close_position_type == 'limit':
+            close_fee = self.maker_fee
+        return close_fee
+
+    @property
+    def open_plus_close_fee(self) -> float:
+        return self.open_fee + self.close_fee
 
     def __str__(self):
-        return f'{self.id}_{self.name}'
+        return f'{self.id}_{self.mode}_{self.name}'
 
 
 class ExecutionManager(models.Manager):
     def get_queryset(self) -> QuerySet:
         return (
             super().get_queryset()
-            .select_related('position', 'position__symbol', 'position__strategy')
+            .select_related(
+                'position', 'position__symbol', 'position__strategy',
+                'position__symbol__okx'
+            )
         )
 
 
@@ -522,18 +533,15 @@ class Position(BaseModel):
     symbol = models.ForeignKey(Symbol, on_delete=models.PROTECT, related_name='positions', blank=True, null=True)
     strategy = models.ForeignKey(Strategy, on_delete=models.PROTECT, related_name='positions', blank=True, null=True)
     is_open = models.BooleanField('Is open', default=True)
+    mode = models.CharField('Mode', max_length=20, default=Strategy.Mode.trade)
 
     @property
     def side(self) -> str:
         return self.position_data['posSide']
 
     @property
-    def size(self) -> float:
-        return self.position_data['availPos']
-
-    @property
     def entry_price(self) -> float:
         return self.position_data['avgPx']
 
     def __str__(self):
-        return f'{self.id}_{self.symbol}_{self.strategy}_{"Open" if self.is_open else "Close"}'
+        return f'{self.id}_{self.symbol}_{self.strategy}'

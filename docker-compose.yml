@@ -24,7 +24,7 @@ services:
       options:
         tag: exchange_web
         syslog-facility: local5
-################################ rabitmq
+######################## rabbitmq
   rabbitmq:
     image: rabbitmq:management
     env_file:
@@ -88,13 +88,16 @@ services:
       replicas: 1
     restart: always
     depends_on:
+      - web
+      - rabbitmq
       - redis
       - postgres
       - default
       - position
       - strategy
+      - trade
+      - emulate
       - websocket
-      - web
     env_file:
       - .env
     networks:
@@ -113,6 +116,7 @@ services:
       replicas: 1
     restart: always
     depends_on:
+      - rabbitmq
       - redis
       - postgres
       - web
@@ -128,12 +132,13 @@ services:
 ######################## queue position
   position:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 5 -l INFO -Q position
+    entrypoint: celery -A exchange worker -c 10 -l INFO -Q position
     deploy:
       mode: replicated
       replicas: 1
     restart: always
     depends_on:
+      - rabbitmq
       - redis
       - postgres
       - web
@@ -155,6 +160,7 @@ services:
       replicas: 1
     restart: always
     depends_on:
+      - rabbitmq
       - redis
       - postgres
       - web
@@ -167,6 +173,50 @@ services:
       options:
         tag: exchange_strategy
         syslog-facility: local5
+######################## queue trade
+  trade:
+    image: exchange:latest
+    entrypoint: celery -A exchange worker -c 10 -l INFO -Q trade
+    deploy:
+      mode: replicated
+      replicas: 1
+    restart: always
+    depends_on:
+      - rabbitmq
+      - redis
+      - postgres
+      - web
+    env_file:
+      - .env
+    networks:
+      - layer
+    logging:
+      driver: syslog
+      options:
+        tag: exchange_trade
+        syslog-facility: local5
+######################## queue emulate
+  emulate:
+    image: exchange:latest
+    entrypoint: celery -A exchange worker -c 10 -l INFO -Q emulate
+    deploy:
+      mode: replicated
+      replicas: 1
+    restart: always
+    depends_on:
+      - rabbitmq
+      - redis
+      - postgres
+      - web
+    env_file:
+      - .env
+    networks:
+      - layer
+    logging:
+      driver: syslog
+      options:
+        tag: exchange_emulate
+        syslog-facility: local5
 ######################## queue websocket
   websocket:
     image: exchange:latest
@@ -176,6 +226,7 @@ services:
       replicas: 1
     restart: always
     depends_on:
+      - rabbitmq
       - redis
       - postgres
       - web

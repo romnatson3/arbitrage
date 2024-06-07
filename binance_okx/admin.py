@@ -15,6 +15,7 @@ from .models import (
     Strategy, Symbol, Position, Execution
 )
 from .misc import get_pretty_dict, get_pretty_text, sort_data
+from .helper import calc
 from .forms import StrategyForm
 from .filters import PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter
 
@@ -279,16 +280,19 @@ class StrategyAdmin(admin.ModelAdmin):
 @admin.register(Position)
 class PositionAdmin(admin.ModelAdmin):
     list_display = (
-        'id', 'is_open', 'strategy', '_position_side', 'symbol', '_position_id', '_trade_id',
-        '_position_size', '_amount', 'updated_at'
+        'id', 'is_open', 'strategy', '_position_side', 'mode', 'symbol',
+        '_position_id', '_trade_id', '_contract', '_amount', 'updated_at'
     )
     fields = (
-        'id', 'is_open', 'strategy', 'symbol', '_position_data', '_sl_tp_data', '_ask_bid_data',
-        'updated_at', 'created_at'
+        'id', 'is_open', 'strategy', 'symbol', 'mode', '_position_data', '_sl_tp_data',
+        '_ask_bid_data', 'updated_at', 'created_at'
     )
     search_fields = ('strategy__name', 'symbol__symbol')
     list_display_links = ('id', 'strategy')
-    readonly_fields = ('id', 'updated_at', 'created_at', '_position_data', '_sl_tp_data', '_ask_bid_data')
+    readonly_fields = (
+        'id', 'updated_at', 'created_at', '_position_data', '_sl_tp_data',
+        '_ask_bid_data'
+    )
     list_filter = ('is_open', PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter)
     actions = ['export_csv_action']
 
@@ -330,11 +334,11 @@ class PositionAdmin(admin.ModelAdmin):
     def _trade_id(self, obj) -> str:
         return obj.position_data.get('tradeId', '')
 
-    @admin.display(description='Position size')
-    def _position_size(self, obj) -> str:
-        return obj.position_data.get('availPos', '')
+    @admin.display(description='Contract size')
+    def _contract(self, obj) -> str:
+        return obj.position_data.get('pos', '')
 
-    @admin.display(description='Amount USD')
+    @admin.display(description='USDT amount')
     def _amount(self, obj) -> str:
         return round(obj.position_data.get('notionalUsd', 0), 2)
 
@@ -354,7 +358,7 @@ class PositionAdmin(admin.ModelAdmin):
             'Спред біржа №2 в % (парсинг)', 'Бід біржа№1 (вхід)', 'Аск біржа№1 (вхід)',
             'Бід біржа№2 (вхід)', 'Аск біржа№2 (вхід)', 'Дельта в пунктах (вхід)',
             'Дельта в % (вхід)', 'Спред біржа №2 в пунктах (вхід)',
-            'Спред біржа №2 в % (вхід)', 'Обсяг на ціні входу в USDT', 'Ціна',
+            'Спред біржа №2 в % (вхід)', 'Обсяг в USDT', 'Ціна',
             'Час закриття', 'Тривалість угоди в мілісекундах', 'Комісія', 'Прибуток'
         ])
         executions = Execution.objects.filter(position__in=queryset).order_by('position__id', 'trade_id').all()
@@ -372,6 +376,8 @@ class PositionAdmin(admin.ModelAdmin):
                 execution.position.strategy.maker_fee
             )
             is_open = 'open' in data.subType.lower()
+            base_coin = calc.get_base_coin_from_sz(data.sz, execution.position.symbol.okx.ct_val)
+            usdt = round(base_coin * data.px, 2)
             row = [
                 execution.position.id,
                 execution.position.symbol.symbol,
@@ -396,7 +402,7 @@ class PositionAdmin(admin.ModelAdmin):
                 ask_bid_data.delta_percent_entry,
                 ask_bid_data.spread_points_entry,
                 ask_bid_data.spread_percent_entry,
-                data.sz * data.px,
+                usdt,
                 data.px,
                 None if is_open else data.ts.split(' ')[1][:-3],
                 None if is_open else duration,
@@ -420,8 +426,13 @@ class PositionAdmin(admin.ModelAdmin):
 
 @admin.register(Execution)
 class ExecutionAdmin(admin.ModelAdmin):
-    list_display = ('id', 'position', '_type', '_size', 'bill_id', 'trade_id', 'updated_at')
-    fields = ('id', 'position', 'bill_id', 'trade_id', '_data', 'updated_at', 'created_at')
+    list_display = (
+        'id', 'position', '_type', '_contract', '_amount', 'bill_id', 'trade_id',
+        'updated_at'
+    )
+    fields = (
+        'id', 'position', 'bill_id', 'trade_id', '_data', 'updated_at', 'created_at'
+    )
     list_display_links = ('id', 'position')
 
     def get_queryset(self, request) -> QuerySet:
@@ -448,6 +459,14 @@ class ExecutionAdmin(admin.ModelAdmin):
     def _type(self, obj) -> str:
         return obj.data.get('subType', '')
 
-    @admin.display(description='Size')
-    def _size(self, obj) -> str:
+    @admin.display(description='Contract size')
+    def _contract(self, obj) -> str:
         return obj.data.get('sz', '')
+
+    @admin.display(description='USDT amount')
+    def _amount(self, obj) -> str:
+        base_coin = calc.get_base_coin_from_sz(
+            obj.data['sz'], obj.position.symbol.okx.ct_val
+        )
+        usdt = base_coin * obj.data['px']
+        return round(usdt, 2)
