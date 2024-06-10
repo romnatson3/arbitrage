@@ -23,7 +23,6 @@ class WebSocketOrders():
     def __init__(self, account: Account) -> None:
         self.is_run = False
         self.ws = websocket.WebSocket()
-        self._run_forever_thread = None
         self._threads = []
         self.account = account
         production_url = 'wss://ws.okx.com:8443/ws/v5/private'

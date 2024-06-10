@@ -79,12 +79,17 @@ def get_pretty_text(obj) -> str:
     for k, v in obj.items():
         if isinstance(v, float):
             l.append(f'{k}: {v:.5f}')
+        elif isinstance(v, list):
+            l.append(
+                f'{k}: <pre style="font-size: 1.05em; font-family: monospace;">'
+                f'{json.dumps(v, indent=2)}</pre>'
+            )
         else:
             l.append(f'{k}: {v}')
     text = '<br>'.join(l)
     return mark_safe(
         '<span style="font-size: 1.05em; font-family: monospace;'
-        f'white-space: nowrap;">{text}</span>'
+        f'white-space: wrap;">{text}</span>'
     )
 
 

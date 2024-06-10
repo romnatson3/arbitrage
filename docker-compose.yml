@@ -76,7 +76,7 @@ services:
     ports:
       - "51455:5555"
     depends_on:
-      - redis
+      - rabbitmq
     networks:
       - layer
 ######################## beat scheduler

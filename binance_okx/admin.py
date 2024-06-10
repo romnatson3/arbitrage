@@ -6,7 +6,7 @@ from django.utils import timezone
 from django.utils.html import format_html
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth import get_user_model
-from django.db.models import QuerySet
+from django.db.models import QuerySet, Q
 from django.http import HttpResponse
 from io import StringIO
 from .forms import CustomUserCreationForm, CustomUserChangeForm
@@ -135,6 +135,15 @@ class SymbolAdmin(admin.ModelAdmin):
     ordering = ('symbol',)
     readonly_fields = ('symbol', 'okx', 'binance', 'updated_at', 'created_at')
 
+    def get_search_results(self, request, queryset, search_term):
+        queryset, use_distinct = super().get_search_results(request, queryset, search_term)
+        if request.headers.get('x-requested-with') == 'XMLHttpRequest':
+            return Symbol.objects.filter(
+                # ~Q(symbol__in=Strategy.objects.values_list('symbols', flat=True).filter(enabled=True)),
+                symbol__icontains=search_term
+            ), use_distinct
+        return queryset, use_distinct
+
 
 @admin.register(BinanceSymbol)
 class BinanceSymbolAdmin(admin.ModelAdmin):
@@ -176,15 +185,6 @@ class OkxSymbolAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
-
-    def get_search_results(self, request, queryset, search_term):
-        queryset, use_distinct = super().get_search_results(request, queryset, search_term)
-        if request.headers.get('x-requested-with') == 'XMLHttpRequest':
-            return OkxSymbol.objects.filter(
-                symbol__in=BinanceSymbol.objects.values_list('symbol', flat=True),
-                symbol__icontains=search_term
-            ), use_distinct
-        return queryset, use_distinct
 
 
 @admin.register(Strategy)
@@ -410,6 +410,10 @@ class ExecutionAdmin(admin.ModelAdmin):
         'id', 'position', 'bill_id', 'trade_id', '_data', 'updated_at', 'created_at'
     )
     list_display_links = ('id', 'position')
+    search_fields = ('position__id',)
+    list_filter = (
+        'position__strategy', 'position__mode', 'position__is_open', 'position__id'
+    )
 
     def get_queryset(self, request) -> QuerySet:
         qs = super().get_queryset(request)

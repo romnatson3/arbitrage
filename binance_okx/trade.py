@@ -90,7 +90,7 @@ class OkxTrade():
             logger.debug(f'Trying to get executions for {order_id=}', extra=self.strategy.extra_log)
             result = self.account.get_account_bills(instType='SWAP', mgnMode='isolated', type=2)
             if result['code'] != '0':
-                raise GetExecutionException(result['data'][0]['sMsg'])
+                raise GetExecutionException(result)
             executions = []
             for execution in result['data']:
                 if execution['ordId'] == order_id:
@@ -103,8 +103,7 @@ class OkxTrade():
                 return executions
             time.sleep(1)
         raise GetExecutionException(
-            f'Failed to get executions for {order_id=}',
-            extra=self.strategy.extra_log
+            f'Not found any executions for {order_id=}', extra=self.strategy.extra_log
         )
 
     def _save_executions(self, data: dict, position: Position) -> Execution:
@@ -159,7 +158,7 @@ class OkxTrade():
         )
         if result['code'] != '0':
             raise ClosePositionException(
-                f'Failed to close {position_side} position. {result["msg"]}'
+                f'Failed to close {position_side} position. {result}'
             )
         else:
             logger.warning(f'Closed {position_side} position', extra=self.strategy.extra_log)
@@ -172,7 +171,10 @@ class OkxTrade():
             logger.debug('Trying to get position data', extra=self.strategy.extra_log)
             result = self.account.get_positions(instId=symbol.inst_id, instType='SWAP')
             if result['code'] != '0':
-                raise GetPositionException(f'Failed to get position data. {result["msg"]}')
+                raise GetPositionException(f'Failed to get position data. {result}')
+            if not result['data']:
+                time.sleep(1)
+                continue
             data = convert_dict_values(result['data'][0])
             if data['pos']:
                 logger.info('Got position data', extra=self.strategy.extra_log)

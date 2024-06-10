@@ -166,7 +166,7 @@ def check_if_position_is_closed() -> None:
                     )
                     result = client.get_positions(instType='SWAP')
                     if result['code'] != '0':
-                        raise GetPositionException(f'Failed to get positions data. {result["msg"]}')
+                        raise GetPositionException(f'Failed to get positions data. {result}')
                     open_positions = {i['instId']: convert_dict_values(i) for i in result['data']}
                     logger.info(
                         f'Found {len(open_positions)} open positions in exchange for account: {account.name}. '
@@ -184,7 +184,7 @@ def check_if_position_is_closed() -> None:
                         )
                     if result['code'] != '0':
                         raise GetExecutionException(result)
-                    all_executions = [convert_dict_values(i) for i in result['data']]
+                    new_executions = [convert_dict_values(i) for i in result['data']]
                     for position in open_positions_db:
                         try:
                             position.strategy._extra_log.update(symbol=position.symbol.symbol)
@@ -215,15 +215,36 @@ def check_if_position_is_closed() -> None:
                                 position.is_open = False
                                 position.save()
                             executions = [
-                                i for i in all_executions
+                                i for i in new_executions
                                 if i['instId'] == position.symbol.okx.inst_id
                             ]
                             if not executions:
-                                logger.warning(
-                                    f'No found any new executions for position {position}',
-                                    extra=position.strategy.extra_log
-                                )
-                                continue
+                                end_time = time.time() + 10
+                                while time.time() < end_time:
+                                    logger.info(
+                                        f'Trying to get new executions for position "{position}"',
+                                        extra=position.strategy.extra_log
+                                    )
+                                    result = client.get_account_bills(
+                                        instType='SWAP', mgnMode='isolated', type=2,
+                                        before=last_execution.bill_id
+                                    )
+                                    if result['code'] != '0':
+                                        raise GetExecutionException(result)
+                                    new_executions = [convert_dict_values(i) for i in result['data']]
+                                    executions = [
+                                        i for i in new_executions
+                                        if i['instId'] == position.symbol.okx.inst_id
+                                    ]
+                                    time.sleep(1)
+                                    if executions:
+                                        break
+                                else:
+                                    logger.warning(
+                                        f'Not found any new executions for position {position}',
+                                        extra=position.strategy.extra_log
+                                    )
+                                    continue
                             logger.info(
                                 f'Found {len(executions)} executions for position {position}',
                                 extra=position.strategy.extra_log

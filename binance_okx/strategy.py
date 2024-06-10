@@ -99,7 +99,7 @@ def time_close_position(strategy: Strategy, position_data) -> bool:
         tz = timezone.get_current_timezone()
         open_time = timezone.datetime.strptime(
             position_data.cTime, '%d-%m-%Y %H:%M:%S.%f').astimezone(tz)
-        close_time = open_time + timezone.timedelta(minutes=strategy.time_to_close)
+        close_time = open_time + timezone.timedelta(seconds=strategy.time_to_close)
         seconds_to_close = (close_time - timezone.localtime()).total_seconds()
         logger.debug(
             f'Time to close {round(seconds_to_close//60)} minutes {round(seconds_to_close%60)} seconds',
