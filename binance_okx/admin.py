@@ -262,7 +262,7 @@ class PositionAdmin(admin.ModelAdmin):
         'id', 'updated_at', 'created_at', '_position_data', '_sl_tp_data',
         '_ask_bid_data'
     )
-    list_filter = ('is_open', PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter)
+    list_filter = ('is_open', 'mode', PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter)
     actions = ['export_csv_action']
 
     def get_queryset(self, request) -> QuerySet:
@@ -324,15 +324,21 @@ class PositionAdmin(admin.ModelAdmin):
         f = StringIO()
         writer = csv.writer(f, delimiter=';')
         writer.writerow([
-            'ІД Позиції', 'Монета', 'Дата', 'Час', 'Позиція (шорт/лонг)', 'Тип',
-            'Бід біржа№1 (парсинг)', 'Аск біржа№1 (парсинг)', 'Бід біржа№2 (парсинг)',
-            'Аск біржа№2 (парсинг)', 'Дельта в пунктах (парсинг)', 'Дельта в % (парсинг)',
-            'Дельта цільова в %', 'Спред біржа №2 в пунктах (парсинг)',
-            'Спред біржа №2 в % (парсинг)', 'Бід біржа№1 (вхід)', 'Аск біржа№1 (вхід)',
-            'Бід біржа№2 (вхід)', 'Аск біржа№2 (вхід)', 'Дельта в пунктах (вхід)',
-            'Дельта в % (вхід)', 'Спред біржа №2 в пунктах (вхід)',
-            'Спред біржа №2 в % (вхід)', 'Обсяг в USDT', 'Ціна',
-            'Час закриття', 'Тривалість угоди в мілісекундах', 'Комісія', 'Прибуток'
+            'ІД Позиції', 'Монета', 'Дата', 'Час', 'Тип (trade/emulate)', 'Позиція (шорт/лонг)', 'Тип (open/close)',
+            'Аск_1 біржа№1 (парсинг)', 'Аск_2 біржа№1 (парсинг)',
+            'Бід_1 біржа№1 (парсинг)', 'Бід_2 біржа№1 (парсинг)',
+            'Аск_1 біржа№2 (парсинг)', 'Аск_2 біржа№2 (парсинг)',
+            'Бід_1 біржа№2 (парсинг)', 'Бід_2 біржа№2 (парсинг)',
+            'Дельта в пунктах (парсинг)', 'Дельта в % (парсинг)', 'Дельта цільова в %',
+            'Спред біржа №2 в пунктах (парсинг)', 'Спред біржа №2 в % (парсинг)',
+            'Аск_1 біржа№1 (вхід)', 'Аск_2 біржа№1 (вхід)',
+            'Бід_1 біржа№1 (вхід)', 'Бід_2 біржа№1 (вхід)',
+            'Аск_1 біржа№2 (вхід)', 'Аск_2 біржа№2 (вхід)',
+            'Бід_1 біржа№2 (вхід)', 'Бід_2 біржа№2 (вхід)',
+            'Дельта в пунктах (вхід)', 'Дельта в % (вхід)',
+            'Спред біржа №2 в пунктах (вхід)', 'Спред біржа №2 в % (вхід)',
+            'Обсяг в USDT', 'Ціна', 'Час закриття', 'Тривалість угоди в мілісекундах',
+            'Комісія', 'Прибуток'
         ])
         executions = (
             Execution.objects.filter(position__in=queryset)
@@ -359,21 +365,30 @@ class PositionAdmin(admin.ModelAdmin):
                 execution.position.symbol.symbol,
                 position_data.cTime.split(' ')[0],
                 position_data.cTime.split(' ')[1][:-3],
+                execution.position.mode,
                 position_data.posSide,
                 data.subType,
-                ask_bid_data.bid_first_exchange,
-                ask_bid_data.ask_first_exchange,
-                ask_bid_data.bid_second_exchange,
-                ask_bid_data.ask_second_exchange,
+                ask_bid_data.first_exchange_previous_ask,
+                ask_bid_data.first_exchange_last_ask,
+                ask_bid_data.first_exchange_previous_bid,
+                ask_bid_data.first_exchange_last_bid,
+                ask_bid_data.second_exchange_previous_ask,
+                ask_bid_data.second_exchange_last_ask,
+                ask_bid_data.second_exchange_previous_bid,
+                ask_bid_data.second_exchange_last_bid,
                 ask_bid_data.delta_points,
                 ask_bid_data.delta_percent,
                 target_profit_percent,
                 ask_bid_data.spread_points,
                 ask_bid_data.spread_percent,
-                ask_bid_data.bid_first_exchange_entry,
-                ask_bid_data.ask_first_exchange_entry,
-                ask_bid_data.bid_second_exchange_entry,
-                ask_bid_data.ask_second_exchange_entry,
+                ask_bid_data.first_exchange_previous_ask_entry,
+                ask_bid_data.first_exchange_last_ask_entry,
+                ask_bid_data.first_exchange_previous_bid_entry,
+                ask_bid_data.first_exchange_last_bid_entry,
+                ask_bid_data.second_exchange_previous_ask_entry,
+                ask_bid_data.second_exchange_last_ask_entry,
+                ask_bid_data.second_exchange_previous_bid_entry,
+                ask_bid_data.second_exchange_last_bid_entry,
                 ask_bid_data.delta_points_entry,
                 ask_bid_data.delta_percent_entry,
                 ask_bid_data.spread_points_entry,

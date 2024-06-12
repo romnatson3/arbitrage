@@ -26,10 +26,10 @@ app.conf.update(
         'binance_okx.tasks.update_okx_ask_bid_price': {'queue': 'default'},
         'binance_okx.tasks.update_okx_market_price': {'queue': 'default'},
         'binance_okx.tasks.check_if_position_is_closed': {'queue': 'position'},
-        'binance_okx.tasks.run_websocket_orders': {'queue': 'websocket'},
-        'binance_okx.tasks.run_strategy': {'queue': 'strategy'},
+        'binance_okx.tasks.run_strategy': {'queue': 'position'},
         'binance_okx.tasks.trade_strategy_for_symbol': {'queue': 'trade'},
-        'binance_okx.tasks.emulate_strategy_for_symbol': {'queue': 'emulate'}
+        'binance_okx.tasks.emulate_strategy_for_symbol': {'queue': 'emulate'},
+        'binance_okx.tasks.run_websocket_orders': {'queue': 'websocket'},
     },
     beat_schedule={
         'run_websocket_orders': {

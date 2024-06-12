@@ -38,10 +38,14 @@ def check_funding_time(strategy: Strategy, symbol: Symbol, position_side: str) -
 
 def fill_position_data(strategy: Strategy, position: Position, prices: dict) -> Position:
     position.ask_bid_data.update(
-        bid_first_exchange=prices['first_exchange_last_bid'],
-        ask_first_exchange=prices['first_exchange_last_ask'],
-        bid_second_exchange=prices['second_exchange_last_bid'],
-        ask_second_exchange=prices['second_exchange_last_ask'],
+        first_exchange_previous_ask=prices['first_exchange_previous_ask'],
+        first_exchange_last_ask=prices['first_exchange_last_ask'],
+        first_exchange_previous_bid=prices['first_exchange_previous_bid'],
+        first_exchange_last_bid=prices['first_exchange_last_bid'],
+        second_exchange_previous_ask=prices['second_exchange_previous_ask'],
+        second_exchange_last_ask=prices['second_exchange_last_ask'],
+        second_exchange_previous_bid=prices['second_exchange_previous_bid'],
+        second_exchange_last_bid=prices['second_exchange_last_bid'],
         spread_points=prices['spread_points'],
         spread_percent=prices['spread_percent'],
         delta_points=prices['delta_points'],
@@ -68,10 +72,14 @@ def fill_position_data(strategy: Strategy, position: Position, prices: dict) -> 
         )
     if strategy.mode == Strategy.Mode.emulate:
         position.ask_bid_data.update(
-            bid_first_exchange_entry=prices['first_exchange_last_bid'],
-            ask_first_exchange_entry=prices['first_exchange_last_ask'],
-            bid_second_exchange_entry=prices['second_exchange_last_bid'],
-            ask_second_exchange_entry=prices['second_exchange_last_ask'],
+            first_exchange_previous_ask=prices['first_exchange_previous_ask'],
+            first_exchange_last_ask=prices['first_exchange_last_ask'],
+            first_exchange_previous_bid=prices['first_exchange_previous_bid'],
+            first_exchange_last_bid=prices['first_exchange_last_bid'],
+            second_exchange_previous_ask=prices['second_exchange_previous_ask'],
+            second_exchange_last_ask=prices['second_exchange_last_ask'],
+            second_exchange_previous_bid=prices['second_exchange_previous_bid'],
+            second_exchange_last_bid=prices['second_exchange_last_bid'],
             spread_points_entry=prices['spread_points'],
             spread_percent_entry=prices['spread_percent'],
             delta_points_entry=prices['delta_points'],
@@ -80,10 +88,14 @@ def fill_position_data(strategy: Strategy, position: Position, prices: dict) -> 
     else:
         _, _, prices_entry = get_ask_bid_prices_and_condition(strategy, position.symbol)
         position.ask_bid_data.update(
-            bid_first_exchange_entry=prices_entry['first_exchange_last_bid'],
-            ask_first_exchange_entry=prices_entry['first_exchange_last_ask'],
-            bid_second_exchange_entry=prices_entry['second_exchange_last_bid'],
-            ask_second_exchange_entry=prices_entry['second_exchange_last_ask'],
+            first_exchange_previous_ask_entry=prices_entry['first_exchange_previous_ask'],
+            first_exchange_last_ask_entry=prices_entry['first_exchange_last_ask'],
+            first_exchange_previous_bid_entry=prices_entry['first_exchange_previous_bid'],
+            first_exchange_last_bid_entry=prices_entry['first_exchange_last_bid'],
+            second_exchange_previous_ask_entry=prices_entry['second_exchange_previous_ask'],
+            second_exchange_last_ask_entry=prices_entry['second_exchange_last_ask'],
+            second_exchange_previous_bid_entry=prices_entry['second_exchange_previous_bid'],
+            second_exchange_last_bid_entry=prices_entry['second_exchange_last_bid'],
             spread_points_entry=prices_entry['spread_points'],
             spread_percent_entry=prices_entry['spread_percent'],
             delta_points_entry=prices_entry['delta_points'],

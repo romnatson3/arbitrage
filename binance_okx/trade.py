@@ -535,14 +535,14 @@ def get_ask_bid_prices_and_condition(strategy: Strategy, symbol: Symbol) -> tupl
     condition_met = False
     first_exchange = CachePrice(strategy.first_account.exchange)
     second_exchange = CachePrice(strategy.second_account.exchange)
-    second_exchange_previous_ask = second_exchange.get_ask_previous_price(symbol.symbol)
-    second_exchange_previous_bid = second_exchange.get_bid_previous_price(symbol.symbol)
-    second_exchange_last_ask = second_exchange.get_ask_last_price(symbol.symbol)
-    second_exchange_last_bid = second_exchange.get_bid_last_price(symbol.symbol)
     first_exchange_previous_ask = first_exchange.get_ask_previous_price(symbol.symbol)
-    first_exchange_previous_bid = first_exchange.get_bid_previous_price(symbol.symbol)
     first_exchange_last_ask = first_exchange.get_ask_last_price(symbol.symbol)
+    first_exchange_previous_bid = first_exchange.get_bid_previous_price(symbol.symbol)
     first_exchange_last_bid = first_exchange.get_bid_last_price(symbol.symbol)
+    second_exchange_previous_ask = second_exchange.get_ask_previous_price(symbol.symbol)
+    second_exchange_last_ask = second_exchange.get_ask_last_price(symbol.symbol)
+    second_exchange_previous_bid = second_exchange.get_bid_previous_price(symbol.symbol)
+    second_exchange_last_bid = second_exchange.get_bid_last_price(symbol.symbol)
     if second_exchange_previous_ask < first_exchange_previous_ask:
         logger.debug(
             'First condition for long position met '
@@ -594,10 +594,14 @@ def get_ask_bid_prices_and_condition(strategy: Strategy, symbol: Symbol) -> tupl
                 extra=strategy.extra_log
             )
     prices = dict(
-        first_exchange_last_bid=first_exchange_last_bid,
+        first_exchange_previous_ask=first_exchange_previous_ask,
         first_exchange_last_ask=first_exchange_last_ask,
-        second_exchange_last_bid=second_exchange_last_bid,
+        first_exchange_previous_bid=first_exchange_previous_bid,
+        first_exchange_last_bid=first_exchange_last_bid,
+        second_exchange_previous_ask=second_exchange_previous_ask,
         second_exchange_last_ask=second_exchange_last_ask,
+        second_exchange_previous_bid=second_exchange_previous_bid,
+        second_exchange_last_bid=second_exchange_last_bid,
         spread_points=spread_points,
         spread_percent=spread_percent,
         delta_points=delta_points,
