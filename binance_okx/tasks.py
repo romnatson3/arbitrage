@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+from typing import Any, Dict, List, Optional
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
@@ -142,127 +143,178 @@ def update_ask_bid_price() -> None:
     update_binance_ask_bid_price.delay()
 
 
+class PositionAndExecution():
+    def __init__(self, account: Account):
+        self.account = account
+        self.client = okx.Account.AccountAPI(
+            account.api_key, account.api_secret, account.api_passphrase,
+            flag='1' if account.testnet else '0',
+            debug=False
+        )
+        self.last_execution_bill = self.get_last_execution_bill()
+
+    def get_open_positions(self) -> None:
+        result = self.client.get_positions(instType='SWAP')
+        if result['code'] != '0':
+            raise GetPositionException(f'Failed to get positions data. {result}')
+        open_positions = {i['instId']: convert_dict_values(i) for i in result['data']}
+        logger.info(
+            f'Found {len(open_positions)} open positions in exchange for account: {self.account.name}'
+        )
+        logger.info(f'Symbols: {", ".join(sorted(list(open_positions)))}')
+        return open_positions
+
+    def get_last_execution_bill(self) -> Optional[str]:
+        return (
+            Execution.objects
+            .filter(position__mode=Strategy.Mode.trade)
+            .values_list('bill_id', flat=True)
+            .order_by('bill_id').last()
+        )
+
+    def get_all_executions(self) -> None:
+        if not self.last_execution_bill:
+            logger.debug('No found any executions in database')
+            result = self.client.get_account_bills(instType='SWAP', mgnMode='isolated', type=2)
+        else:
+            result = self.client.get_account_bills(
+                instType='SWAP', mgnMode='isolated', type=2,
+                before=self.last_execution_bill
+            )
+        if result['code'] != '0':
+            raise GetExecutionException(result)
+        new_executions = [convert_dict_values(i) for i in result['data']]
+        return new_executions
+
+    def save_executions(self, executions: List[Dict[str, Any]], position: Position) -> None:
+        for e in executions:
+            e['subType'] = Execution.sub_type.get(e['subType'], e['subType'])
+            execution = Execution.objects.filter(
+                position=position, bill_id=e['billId'], trade_id=e['tradeId']
+            ).first()
+            if execution:
+                logger.warning(
+                    f'Execution {execution.bill_id=} {execution.trade_id=} already exist',
+                    extra=position.strategy.extra_log
+                )
+                continue
+            execution = Execution.objects.create(
+                position=position, bill_id=e['billId'],
+                trade_id=e['tradeId'], data=e
+            )
+            logger.info(
+                f'Saved execution {execution.bill_id=} {execution.trade_id=}',
+                extra=position.strategy.extra_log
+            )
+
+    def get_new_executions_for_position(self, position: Position) -> Optional[List[Dict[str, Any]]]:
+        end_time = time.time() + settings.EXECUTION_RECEIVE_TIMEOUT
+        executions = None
+        while time.time() < end_time:
+            logger.info(
+                f'Trying to get new executions for position "{position}"',
+                extra=position.strategy.extra_log
+            )
+            result = self.client.get_account_bills(
+                instType='SWAP', mgnMode='isolated', type=2,
+                before=self.last_execution_bill
+            )
+            if result['code'] != '0':
+                raise GetExecutionException(result)
+            new_executions = [convert_dict_values(i) for i in result['data']]
+            executions = [
+                i for i in new_executions
+                if i['instId'] == position.symbol.okx.inst_id
+            ]
+            time.sleep(2)
+            if executions:
+                break
+        else:
+            logger.critical(
+                f'Failed to get new executions for position "{position}"',
+                extra=position.strategy.extra_log
+            )
+        return executions
+
+
+def check_single_position(
+    position: Position,
+    pae: PositionAndExecution,
+    open_positions: Dict[str, Any],
+    new_executions: List[Dict[str, Any]]
+) -> None:
+    try:
+        position.strategy._extra_log.update(symbol=position.symbol.symbol)
+        if position.symbol.okx.inst_id in open_positions:
+            logger.debug(
+                f'Position "{position}" is still open in exchange',
+                extra=position.strategy.extra_log
+            )
+        else:
+            logger.warning(
+                f'Position {position} is closed in exchange',
+                extra=position.strategy.extra_log
+            )
+            position.is_open = False
+            position.save()
+        executions = [
+            i for i in new_executions
+            if i['instId'] == position.symbol.okx.inst_id
+        ]
+        if not executions and position.is_open:
+            logger.debug(
+                f'Not found any new executions for open position "{position}"',
+                extra=position.strategy.extra_log
+            )
+            return
+        if not executions and not position.is_open:
+            logger.warning(
+                f'Not found any new executions for closed position "{position}"',
+                extra=position.strategy.extra_log
+            )
+            executions = pae.get_new_executions_for_position(position)
+        if executions:
+            logger.info(
+                f'Found {len(executions)} executions for position "{position}"',
+                extra=position.strategy.extra_log
+            )
+            pae.save_executions(executions, position)
+    except Exception as e:
+        logger.exception(e, extra=position.strategy.extra_log)
+
+
 @app.task
 def check_if_position_is_closed() -> None:
-    accounts = Account.objects.filter(exchange='okx').all()
-    if not accounts:
-        logger.debug('No okx accounts found')
-        return
     try:
+        accounts = Account.objects.filter(exchange='okx').all()
+        if not accounts:
+            logger.debug('No okx accounts found')
+            return
         with TaskLock('okx_task_check_if_position_is_closed'):
             for account in accounts:
                 try:
                     open_positions_db = Position.objects.filter(
                         is_open=True, mode=Strategy.Mode.trade,
-                        strategy__second_account=account
-                    ).all()
+                        strategy__second_account=account).all()
                     if not open_positions_db:
-                        logger.debug(f'No found any open positions in database for account: {account.name}')
-                        continue
-                    client = okx.Account.AccountAPI(
-                        account.api_key, account.api_secret, account.api_passphrase,
-                        flag='1' if account.testnet else '0',
-                        debug=False
-                    )
-                    result = client.get_positions(instType='SWAP')
-                    if result['code'] != '0':
-                        raise GetPositionException(f'Failed to get positions data. {result}')
-                    open_positions = {i['instId']: convert_dict_values(i) for i in result['data']}
-                    logger.info(
-                        f'Found {len(open_positions)} open positions in exchange for account: {account.name}. '
-                        f'{", ".join(sorted(list(open_positions)))}'
-                    )
-                    last_execution = Execution.objects.filter(
-                        position__mode=Strategy.Mode.trade).order_by('bill_id').last()
-                    if not last_execution:
-                        logger.debug('No found any executions in database')
-                        result = client.get_account_bills(instType='SWAP', mgnMode='isolated', type=2)
-                    else:
-                        result = client.get_account_bills(
-                            instType='SWAP', mgnMode='isolated', type=2,
-                            before=last_execution.bill_id
+                        logger.debug(
+                            f'No found any open positions in database for account: {account.name}'
                         )
-                    if result['code'] != '0':
-                        raise GetExecutionException(result)
-                    new_executions = [convert_dict_values(i) for i in result['data']]
+                        continue
+                    pae = PositionAndExecution(account)
+                    open_positions = pae.get_open_positions()
+                    new_executions = pae.get_all_executions()
+                    threads = []
                     for position in open_positions_db:
-                        try:
-                            position.strategy._extra_log.update(symbol=position.symbol.symbol)
-                            if position.symbol.okx.inst_id in open_positions:
-                                logger.debug(
-                                    f'Position "{position}" is still open in exchange',
-                                    extra=position.strategy.extra_log
-                                )
-                                if (position.position_data['pos'] !=
-                                    open_positions[position.symbol.okx.inst_id]['pos']):
-                                    logger.warning(
-                                        f'Position "{position}" size is different in database and exchange',
-                                        extra=position.strategy.extra_log
-                                    )
-                                    position.position_data = open_positions[position.symbol.okx.inst_id]
-                                    position.save()
-                                    logger.info(
-                                        f'Updated position "{position}"',
-                                        extra=position.strategy.extra_log
-                                    )
-                                else:
-                                    continue
-                            else:
-                                logger.warning(
-                                    f'Position {position} is closed in exchange',
-                                    extra=position.strategy.extra_log
-                                )
-                                position.is_open = False
-                                position.save()
-                            executions = [
-                                i for i in new_executions
-                                if i['instId'] == position.symbol.okx.inst_id
-                            ]
-                            if not executions:
-                                end_time = time.time() + 10
-                                while time.time() < end_time:
-                                    logger.info(
-                                        f'Trying to get new executions for position "{position}"',
-                                        extra=position.strategy.extra_log
-                                    )
-                                    result = client.get_account_bills(
-                                        instType='SWAP', mgnMode='isolated', type=2,
-                                        before=last_execution.bill_id
-                                    )
-                                    if result['code'] != '0':
-                                        raise GetExecutionException(result)
-                                    new_executions = [convert_dict_values(i) for i in result['data']]
-                                    executions = [
-                                        i for i in new_executions
-                                        if i['instId'] == position.symbol.okx.inst_id
-                                    ]
-                                    time.sleep(1)
-                                    if executions:
-                                        break
-                                else:
-                                    logger.warning(
-                                        f'Not found any new executions for position {position}',
-                                        extra=position.strategy.extra_log
-                                    )
-                                    continue
-                            logger.info(
-                                f'Found {len(executions)} executions for position {position}',
-                                extra=position.strategy.extra_log
-                            )
-                            for e in executions:
-                                if Execution.sub_type.get(e['subType']):
-                                    e['subType'] = Execution.sub_type[e['subType']]
-                                execution = Execution.objects.create(
-                                    position=position, bill_id=e['billId'],
-                                    trade_id=e['tradeId'], data=e
-                                )
-                                logger.info(
-                                    f'Saved execution {execution.bill_id=} {execution.trade_id=}',
-                                    extra=position.strategy.extra_log
-                                )
-                        except Exception as e:
-                            logger.exception(e, extra=position.strategy.extra_log)
-                            continue
+                        check_single_position(position, pae, open_positions, new_executions)
+                        # thread = threading.Thread(
+                        #     target=check_single_position,
+                        #     args=(position, pae, open_positions, new_executions)
+                        # )
+                        # threads.append(thread)
+                        # thread.start()
+                    # for thread in threads:
+                        # thread.join()
                 except Exception as e:
                     logger.exception(e)
                     continue

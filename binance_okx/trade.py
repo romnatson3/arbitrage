@@ -2,6 +2,7 @@ import logging
 import time
 import uuid
 from django.utils import timezone
+from django.conf import settings
 import okx.Trade as Trade
 import okx.Account as Account
 from .models import Strategy, Symbol, OkxSymbol, Execution, Position
@@ -85,7 +86,9 @@ class OkxTrade():
         return position
 
     def get_executions(self, order_id: str) -> list:
-        end_time = time.time() + 10
+        if not isinstance(order_id, str):
+            order_id = str(order_id)
+        end_time = time.time() + settings.EXECUTION_RECEIVE_TIMEOUT
         while time.time() < end_time:
             logger.debug(f'Trying to get executions for {order_id=}', extra=self.strategy.extra_log)
             result = self.account.get_account_bills(instType='SWAP', mgnMode='isolated', type=2)
@@ -101,9 +104,9 @@ class OkxTrade():
             if executions:
                 logger.info(f'Got {len(executions)} executions for {order_id=}', extra=self.strategy.extra_log)
                 return executions
-            time.sleep(1)
+            time.sleep(2)
         raise GetExecutionException(
-            f'Not found any executions for {order_id=}', extra=self.strategy.extra_log
+            f'Not found any executions for {order_id=}. Timeout {settings.EXECUTION_RECEIVE_TIMEOUT}s reached'
         )
 
     def _save_executions(self, data: dict, position: Position) -> Execution:
@@ -157,9 +160,7 @@ class OkxTrade():
             mgnMode='isolated'
         )
         if result['code'] != '0':
-            raise ClosePositionException(
-                f'Failed to close {position_side} position. {result}'
-            )
+            raise ClosePositionException(f'Failed to close {position_side} position. {result}')
         else:
             logger.warning(f'Closed {position_side} position', extra=self.strategy.extra_log)
 
@@ -307,7 +308,7 @@ class OkxTrade():
             symbol = self.symbol_okx
         result = self.trade.get_order_list(instId=symbol.inst_id)
         if result['code'] != '0':
-            raise GetOrderException(result['data'][0]['sMsg'])
+            raise GetOrderException(result)
         orders = []
         for order in result['data']:
             orders.append(convert_dict_values(order))
@@ -317,13 +318,13 @@ class OkxTrade():
     def get_order(self, symbol: OkxSymbol, order_id: str) -> dict:
         result = self.trade.get_order(instId=symbol.inst_id, ordId=order_id)
         if result['code'] != '0':
-            raise GetOrderException(result['data'][0]['sMsg'])
+            raise GetOrderException(result)
         return convert_dict_values(result['data'][0])
 
     def cancel_order(self, symbol: OkxSymbol, order_id: str) -> None:
         result = self.trade.cancel_order(instId=symbol.inst_id, ordId=order_id)
         if result['code'] != '0':
-            raise CancelOrderException(result['data'][0]['sMsg'])
+            raise CancelOrderException(result)
         else:
             logger.info(f'Cancelled {order_id=}', extra=self.strategy.extra_log)
 
@@ -332,11 +333,11 @@ class OkxTrade():
             symbol = self.symbol_okx
         result = self.trade.order_algos_list(instId=symbol.inst_id, ordType='conditional')
         if result['code'] != '0':
-            raise GetOrderException(result['data'][0]['sMsg'])
+            raise GetOrderException(result)
         if not result['data']:
             result = self.trade.order_algos_list(instId=symbol.inst_id, ordType='oco')
             if result['code'] != '0':
-                raise GetOrderException(result['data'][0]['sMsg'])
+                raise GetOrderException(result)
         if result['data']:
             return int(result['data'][0]['algoId'])
 
@@ -357,7 +358,7 @@ class OkxTrade():
             newSlTriggerPxType='mark'
         )
         if result['code'] != '0':
-            raise PlaceOrderException(result['data'][0]['sMsg'])
+            raise PlaceOrderException(result)
         logger.info(f'Updated stop loss {price=}', extra=self.strategy.extra_log)
 
     def update_take_profit(self, price: float, symbol: OkxSymbol = None, position_side: str = None) -> None:
@@ -377,7 +378,7 @@ class OkxTrade():
             newTpTriggerPxType='mark'
         )
         if result['code'] != '0':
-            raise PlaceOrderException(result['data'][0]['sMsg'])
+            raise PlaceOrderException(result)
         logger.info(f'Updated take profit {price=}', extra=self.strategy.extra_log)
 
 

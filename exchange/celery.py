@@ -38,7 +38,7 @@ app.conf.update(
         },
         'check_if_position_is_closed': {
             'task': 'binance_okx.tasks.check_if_position_is_closed',
-            'schedule': 1,
+            'schedule': 3,
         },
         'okx_market_price': {
             'task': 'binance_okx.tasks.update_okx_market_price',
