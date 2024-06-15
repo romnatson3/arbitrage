@@ -331,10 +331,8 @@ class PositionAdmin(admin.ModelAdmin):
             'Бід_1 біржа№2 (парсинг)', 'Бід_2 біржа№2 (парсинг)',
             'Дельта в пунктах (парсинг)', 'Дельта в % (парсинг)', 'Дельта цільова в %',
             'Спред біржа №2 в пунктах (парсинг)', 'Спред біржа №2 в % (парсинг)',
-            'Аск_1 біржа№1 (вхід)', 'Аск_2 біржа№1 (вхід)',
-            'Бід_1 біржа№1 (вхід)', 'Бід_2 біржа№1 (вхід)',
-            'Аск_1 біржа№2 (вхід)', 'Аск_2 біржа№2 (вхід)',
-            'Бід_1 біржа№2 (вхід)', 'Бід_2 біржа№2 (вхід)',
+            'Аск_2 біржа№1 (вхід)', 'Бід_2 біржа№1 (вхід)',
+            'Аск_2 біржа№2 (вхід)', 'Бід_2 біржа№2 (вхід)',
             'Дельта в пунктах (вхід)', 'Дельта в % (вхід)',
             'Спред біржа №2 в пунктах (вхід)', 'Спред біржа №2 в % (вхід)',
             'Обсяг в USDT', 'Ціна', 'Час закриття', 'Тривалість угоди в мілісекундах',
@@ -352,19 +350,20 @@ class PositionAdmin(admin.ModelAdmin):
                 timezone.datetime.strptime(data.ts, '%d-%m-%Y %H:%M:%S.%f') -
                 timezone.datetime.strptime(position_data.cTime, '%d-%m-%Y %H:%M:%S.%f')
             ).total_seconds() * 1000)
-            target_profit_percent = ( 
-                execution.position.strategy.target_profit + 
-                execution.position.strategy.taker_fee +
-                execution.position.strategy.maker_fee
-            )
             is_open = 'open' in data.subType.lower()
             base_coin = calc.get_base_coin_from_sz(data.sz, execution.position.symbol.okx.ct_val)
             usdt = round(base_coin * data.px, 2)
+            if 'open' in data.subType.lower():
+                open_date = data.ts.split(' ')[0]
+                open_time = data.ts.split(' ')[1][:-3]
+            else:
+                open_date = position_data.cTime.split(' ')[0]
+                open_time = position_data.cTime.split(' ')[1][:-3]
             row = [
                 execution.position.id,
                 execution.position.symbol.symbol,
-                position_data.cTime.split(' ')[0],
-                position_data.cTime.split(' ')[1][:-3],
+                open_date,
+                open_time,
                 execution.position.mode,
                 position_data.posSide,
                 data.subType,
@@ -378,16 +377,12 @@ class PositionAdmin(admin.ModelAdmin):
                 ask_bid_data.second_exchange_last_bid,
                 ask_bid_data.delta_points,
                 ask_bid_data.delta_percent,
-                target_profit_percent,
+                ask_bid_data.target_delta,
                 ask_bid_data.spread_points,
                 ask_bid_data.spread_percent,
-                ask_bid_data.first_exchange_previous_ask_entry,
                 ask_bid_data.first_exchange_last_ask_entry,
-                ask_bid_data.first_exchange_previous_bid_entry,
                 ask_bid_data.first_exchange_last_bid_entry,
-                ask_bid_data.second_exchange_previous_ask_entry,
                 ask_bid_data.second_exchange_last_ask_entry,
-                ask_bid_data.second_exchange_previous_bid_entry,
                 ask_bid_data.second_exchange_last_bid_entry,
                 ask_bid_data.delta_points_entry,
                 ask_bid_data.delta_percent_entry,
@@ -402,16 +397,17 @@ class PositionAdmin(admin.ModelAdmin):
             ]
             for i, j in enumerate(row):
                 if isinstance(j, float):
-                    if i in [10, 13, 19, 21]:
+                    if i in [15, 18, 24, 26]:
                         row[i] = f'{j:.2f}'
-                    else:
+                    elif i in [16, 17, 19, 25, 27]:
                         row[i] = f'{j:.5f}'
-                    row[i] = row[i].replace('.', ',')
+                    # else:
+                    #     row[i] = f'{j:.5f}'
             writer.writerow(row)
         f.seek(0)
-        response = HttpResponse(f, content_type='text/csv')
+        response = HttpResponse(f.read().replace('.', ','), content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="positions.csv"'
-        self.message_user(request, f'Positions exported: {queryset.count()}')
+        # self.message_user(request, f'Positions exported: {queryset.count()}')
         return response
 
 

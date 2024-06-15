@@ -102,7 +102,10 @@ class OkxTrade():
                         e['subType'] = Execution.sub_type[e['subType']]
                     executions.append(convert_dict_values(execution))
             if executions:
-                logger.info(f'Got {len(executions)} executions for {order_id=}', extra=self.strategy.extra_log)
+                logger.info(
+                    f'Got {len(executions)} executions for {order_id=}',
+                    extra=self.strategy.extra_log
+                )
                 return executions
             time.sleep(2)
         raise GetExecutionException(
@@ -114,10 +117,18 @@ class OkxTrade():
         trade_id = data['tradeId']
         execution = Execution.objects.filter(bill_id=bill_id, trade_id=trade_id).first()
         if execution:
-            logger.warning(f'Execution {bill_id=} {trade_id=} already exists', extra=self.strategy.extra_log)
+            logger.warning(
+                f'Execution {bill_id=} {trade_id=} already exists',
+                extra=self.strategy.extra_log
+            )
             return execution
-        execution = Execution.objects.create(data=data, position=position, bill_id=bill_id, trade_id=trade_id)
-        logger.info(f'Saved execution {bill_id=} {trade_id=}', extra=self.strategy.extra_log)
+        execution = Execution.objects.create(
+            data=data, position=position, bill_id=bill_id, trade_id=trade_id)
+        logger.info(
+            f'Saved execution {bill_id=}, {trade_id=}, subType={data["subType"]}, '
+            f'sz={data["sz"]}, px={data["px"]}, ordId={data["ordId"]}',
+            extra=self.strategy.extra_log
+        )
         return execution
 
     def close_position(self, size_usdt: float, symbol: OkxSymbol = None, position_side: str = None) -> None:
@@ -178,7 +189,11 @@ class OkxTrade():
                 continue
             data = convert_dict_values(result['data'][0])
             if data['pos']:
-                logger.info('Got position data', extra=self.strategy.extra_log)
+                logger.info(
+                    f'Got position data: side={data["posSide"]}, sz={data["pos"]}, '
+                    f'notionalUsd={data["notionalUsd"]}, avgPx={data["avgPx"]}',
+                    extra=self.strategy.extra_log
+                )
                 return data
             time.sleep(1)
         raise GetPositionException('Failed to get position data. Timeout')
@@ -534,16 +549,27 @@ def get_ask_bid_prices_and_condition(strategy: Strategy, symbol: Symbol) -> tupl
     delta_points = None
     spread_points = None
     condition_met = False
+    min_delta_percent = None
     first_exchange = CachePrice(strategy.first_account.exchange)
     second_exchange = CachePrice(strategy.second_account.exchange)
     first_exchange_previous_ask = first_exchange.get_ask_previous_price(symbol.symbol)
     first_exchange_last_ask = first_exchange.get_ask_last_price(symbol.symbol)
     first_exchange_previous_bid = first_exchange.get_bid_previous_price(symbol.symbol)
     first_exchange_last_bid = first_exchange.get_bid_last_price(symbol.symbol)
+    logger.debug(
+        f'{first_exchange_previous_ask=}, {first_exchange_last_ask=}, '
+        f'{first_exchange_previous_bid=}, {first_exchange_last_bid=}',
+        extra=strategy.extra_log
+    )
     second_exchange_previous_ask = second_exchange.get_ask_previous_price(symbol.symbol)
     second_exchange_last_ask = second_exchange.get_ask_last_price(symbol.symbol)
     second_exchange_previous_bid = second_exchange.get_bid_previous_price(symbol.symbol)
     second_exchange_last_bid = second_exchange.get_bid_last_price(symbol.symbol)
+    logger.debug(
+        f'{second_exchange_previous_ask=}, {second_exchange_last_ask=}, '
+        f'{second_exchange_previous_bid=}, {second_exchange_last_bid=}',
+        extra=strategy.extra_log
+    )
     if second_exchange_previous_ask < first_exchange_previous_ask:
         logger.debug(
             'First condition for long position met '
@@ -551,12 +577,13 @@ def get_ask_bid_prices_and_condition(strategy: Strategy, symbol: Symbol) -> tupl
             extra=strategy.extra_log
         )
         first_exchange_delta_percent = (
-            (first_exchange_previous_bid - first_exchange_last_bid) / first_exchange_previous_bid * 100
+            (first_exchange_last_bid - first_exchange_previous_bid) / first_exchange_previous_bid * 100
         )
         second_exchange_delta_percent = (
-            (second_exchange_previous_ask - second_exchange_last_ask) / second_exchange_previous_ask * 100
+            (second_exchange_last_ask - second_exchange_previous_ask) / second_exchange_previous_ask * 100
         )
         position_side = 'long'
+        delta_points = (first_exchange_last_bid - second_exchange_last_ask) / symbol.okx.tick_size
     elif second_exchange_previous_bid > first_exchange_previous_bid:
         logger.debug(
             'First condition for short position met '
@@ -564,23 +591,26 @@ def get_ask_bid_prices_and_condition(strategy: Strategy, symbol: Symbol) -> tupl
             extra=strategy.extra_log
         )
         first_exchange_delta_percent = (
-            (first_exchange_previous_ask - first_exchange_last_ask) / first_exchange_previous_ask * 100
+            (first_exchange_last_ask - first_exchange_previous_ask) / first_exchange_previous_ask * 100
         )
         second_exchange_delta_percent = (
-            (second_exchange_previous_bid - second_exchange_last_bid) / second_exchange_previous_bid * 100
+            (second_exchange_last_bid - second_exchange_previous_bid) / second_exchange_previous_bid * 100
         )
         position_side = 'short'
+        delta_points = (first_exchange_last_ask - second_exchange_last_bid) / symbol.okx.tick_size
     spread_percent = (
         (second_exchange_last_ask - second_exchange_last_bid) / second_exchange_last_bid * 100
     )
     spread_points = (second_exchange_last_ask - second_exchange_last_bid) / symbol.okx.tick_size
     if position_side:
-        min_delta_percent = strategy.open_plus_close_fee + spread_percent + strategy.target_profit
+        logger.debug(f'{spread_percent=:.10f}, {spread_points=:.2f}, {delta_points=:.2f}', extra=strategy.extra_log)
+        logger.debug(
+            f'{first_exchange_delta_percent=:.10f}, {second_exchange_delta_percent=:.10f}, {position_side=}',
+            extra=strategy.extra_log
+        )
+        target_profit = strategy.tp_second_price_percent if strategy.close_position_parts else strategy.target_profit
+        min_delta_percent = strategy.open_plus_close_fee + spread_percent + target_profit
         delta_percent = first_exchange_delta_percent - second_exchange_delta_percent
-        if position_side == 'long':
-            delta_points = (first_exchange_last_bid - second_exchange_last_ask) / symbol.okx.tick_size
-        if position_side == 'short':
-            delta_points = (first_exchange_last_ask - second_exchange_last_bid) / symbol.okx.tick_size
         if delta_percent >= min_delta_percent:
             condition_met = True
             logger.info(
@@ -606,6 +636,7 @@ def get_ask_bid_prices_and_condition(strategy: Strategy, symbol: Symbol) -> tupl
         spread_points=spread_points,
         spread_percent=spread_percent,
         delta_points=delta_points,
-        delta_percent=delta_percent
+        delta_percent=delta_percent,
+        target_delta=min_delta_percent
     )
     return condition_met, position_side, prices

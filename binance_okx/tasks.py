@@ -3,6 +3,7 @@ import threading
 import time
 from typing import Any, Dict, List, Optional
 from django.utils import timezone
+from datetime import datetime
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.conf import settings
@@ -174,7 +175,7 @@ class PositionAndExecution():
 
     def get_all_executions(self) -> None:
         if not self.last_execution_bill:
-            logger.debug('No found any executions in database')
+            logger.info('No found any executions in database')
             result = self.client.get_account_bills(instType='SWAP', mgnMode='isolated', type=2)
         else:
             result = self.client.get_account_bills(
@@ -184,6 +185,11 @@ class PositionAndExecution():
         if result['code'] != '0':
             raise GetExecutionException(result)
         new_executions = [convert_dict_values(i) for i in result['data']]
+        logger.info(
+            f'Found {len(new_executions)} new executions in exchange, '
+            f'before bill_id: {self.last_execution_bill}, '
+            f'for account: {self.account.name}'
+        )
         return new_executions
 
     def save_executions(self, executions: List[Dict[str, Any]], position: Position) -> None:
@@ -203,7 +209,8 @@ class PositionAndExecution():
                 trade_id=e['tradeId'], data=e
             )
             logger.info(
-                f'Saved execution {execution.bill_id=} {execution.trade_id=}',
+                f'Saved execution bill_id={execution.bill_id}, trade_id={execution.trade_id}, '
+                f'subType="{e["subType"]}", sz={e["sz"]}, px={e["px"]}, ordId={e["ordId"]}',
                 extra=position.strategy.extra_log
             )
 
@@ -212,7 +219,8 @@ class PositionAndExecution():
         executions = None
         while time.time() < end_time:
             logger.info(
-                f'Trying to get new executions for position "{position}"',
+                f'Trying to get new executions for position "{position}", '
+                f'before bill_id: {self.last_execution_bill}',
                 extra=position.strategy.extra_log
             )
             result = self.client.get_account_bills(
@@ -257,10 +265,14 @@ def check_single_position(
             )
             position.is_open = False
             position.save()
-        executions = [
-            i for i in new_executions
-            if i['instId'] == position.symbol.okx.inst_id
-        ]
+        open_positions_date_time = datetime.strptime(
+            position.position_data['cTime'], '%d-%m-%Y %H:%M:%S.%f'
+        )
+        executions = list(filter(
+            lambda x: x['instId'] == position.symbol.okx.inst_id and 
+            datetime.strptime(x['ts'], '%d-%m-%Y %H:%M:%S.%f') >= open_positions_date_time,
+            new_executions
+        ))
         if not executions and position.is_open:
             logger.debug(
                 f'Not found any new executions for open position "{position}"',
