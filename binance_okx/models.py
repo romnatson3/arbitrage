@@ -363,6 +363,20 @@ class Execution(BaseModel):
         return f'{self.position} - {self.bill_id}'
 
 
+class Bill(BaseModel):
+    class Meta:
+        verbose_name = 'Bill'
+        verbose_name_plural = 'Bills'
+        indexes = [
+            models.Index(models.F('data__billId'), name='bill_id_idx')
+        ]
+
+    data = models.JSONField('Data', default=dict)
+
+    def __str__(self):
+        return f'{self.id} - {self.data["billId"]}'
+
+
 class PositionManager(models.Manager):
     def get_queryset(self) -> QuerySet:
         return (
