@@ -11,12 +11,16 @@ from django.http import HttpResponse
 from io import StringIO
 from .forms import CustomUserCreationForm, CustomUserChangeForm
 from .models import (
-    StatusLog, Account, OkxSymbol, BinanceSymbol, Strategy, Symbol, Position, Execution
+    StatusLog, Account, OkxSymbol, BinanceSymbol, Strategy, Symbol, Position, Execution, Bill
 )
 from .misc import get_pretty_dict, get_pretty_text, sort_data
 from .helper import calc
 from .forms import StrategyForm
-from .filters import PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter
+from .filters import (
+    PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter,
+    BillInstrumentFilter, BillSubTypeFilter
+)
+from binance_okx.trade import OkxTrade
 
 
 User = get_user_model()
@@ -58,7 +62,7 @@ class StatusLogAdmin(admin.ModelAdmin):
         'colored_msg', 'strategy', 'symbol', 'create_datetime_format'
     )
     list_display_links = ('colored_msg',)
-    list_filter = ('level',)
+    list_filter = ('level', 'symbol')
     list_per_page = 50
     search_fields = ('msg', 'trace')
     fields = (
@@ -263,7 +267,7 @@ class PositionAdmin(admin.ModelAdmin):
         '_ask_bid_data'
     )
     list_filter = ('is_open', 'mode', PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter)
-    actions = ['export_csv_action']
+    actions = ['export_csv_action', 'toggle_open_close', 'manual_fill_execution']
 
     def get_queryset(self, request) -> QuerySet:
         qs = super().get_queryset(request)
@@ -319,6 +323,43 @@ class PositionAdmin(admin.ModelAdmin):
     def _time_to_close(self, obj) -> str:
         return obj.strategy.time_to_close
 
+    @admin.action(description='Toggle open/close')
+    def toggle_open_close(self, request, queryset):
+        for position in queryset:
+            position.is_open = not position.is_open
+            position.save()
+        self.message_user(request, f'Positions toggled: {queryset.count()}')
+
+    @admin.action(description='Pull execution data manually')
+    def manual_fill_execution(self, request, queryset):
+        tz = timezone.get_current_timezone()
+        for position in queryset:
+            position.strategy._extra_log.update(symbol=position.symbol.symbol)
+            executions = Bill.objects.raw(
+                f'''SELECT bill_id, data
+                    FROM binance_okx_bill
+                    WHERE binance_okx_bill.account_id = {position.strategy.second_account.id} AND
+                          (binance_okx_bill.data ->> 'instId') = '{position.symbol.okx.inst_id}' AND
+                          to_timestamp((data->>'ts'), 'DD-MM-YYYY HH24:MI:SS.US') BETWEEN
+                          to_timestamp('{position.position_data["cTime"]}', 'DD-MM-YYYY HH24:MI:SS.US') AND
+                          to_timestamp('{position.updated_at.astimezone(tz):%d-%m-%Y %T.%f}', 'DD-MM-YYYY HH24:MI:SS.US');
+                ''')
+            logger.debug(executions.query.sql, extra=position.strategy._extra_log)
+            logger.info(
+                f'Found {len(executions)} exceptions for position {position.id}',
+                extra=position.strategy._extra_log
+            )
+            if executions:
+                self.message_user(
+                    request,
+                    f'Found {len(executions)} exceptions for position {position.id}',
+                    level='WARNING'
+                )
+                for execution in executions:
+                    OkxTrade.save_execution(execution.data, position)
+            else:
+                self.message_user(request, f'No exceptions found for position {position.id}', level='ERROR')
+
     @admin.action(description='Export CSV')
     def export_csv_action(self, request, queryset):
         f = StringIO()
@@ -356,53 +397,87 @@ class PositionAdmin(admin.ModelAdmin):
             if 'open' in data.subType.lower():
                 open_date = data.ts.split(' ')[0]
                 open_time = data.ts.split(' ')[1][:-3]
+                row = [
+                    execution.position.id,
+                    execution.position.symbol.symbol,
+                    open_date,
+                    open_time,
+                    execution.position.mode,
+                    position_data.posSide,
+                    data.subType,
+                    ask_bid_data.first_exchange_previous_ask,
+                    ask_bid_data.first_exchange_last_ask,
+                    ask_bid_data.first_exchange_previous_bid,
+                    ask_bid_data.first_exchange_last_bid,
+                    ask_bid_data.second_exchange_previous_ask,
+                    ask_bid_data.second_exchange_last_ask,
+                    ask_bid_data.second_exchange_previous_bid,
+                    ask_bid_data.second_exchange_last_bid,
+                    ask_bid_data.delta_points,
+                    ask_bid_data.delta_percent,
+                    ask_bid_data.target_delta,
+                    ask_bid_data.spread_points,
+                    ask_bid_data.spread_percent,
+                    ask_bid_data.first_exchange_last_ask_entry,
+                    ask_bid_data.first_exchange_last_bid_entry,
+                    ask_bid_data.second_exchange_last_ask_entry,
+                    ask_bid_data.second_exchange_last_bid_entry,
+                    ask_bid_data.delta_points_entry,
+                    ask_bid_data.delta_percent_entry,
+                    ask_bid_data.spread_points_entry,
+                    ask_bid_data.spread_percent_entry,
+                    usdt,
+                    data.px,
+                    None if is_open else data.ts.split(' ')[1][:-3],
+                    None if is_open else duration,
+                    data.fee,
+                    None if is_open else data.pnl
+                ]
             else:
                 open_date = position_data.cTime.split(' ')[0]
                 open_time = position_data.cTime.split(' ')[1][:-3]
-            row = [
-                execution.position.id,
-                execution.position.symbol.symbol,
-                open_date,
-                open_time,
-                execution.position.mode,
-                position_data.posSide,
-                data.subType,
-                ask_bid_data.first_exchange_previous_ask,
-                ask_bid_data.first_exchange_last_ask,
-                ask_bid_data.first_exchange_previous_bid,
-                ask_bid_data.first_exchange_last_bid,
-                ask_bid_data.second_exchange_previous_ask,
-                ask_bid_data.second_exchange_last_ask,
-                ask_bid_data.second_exchange_previous_bid,
-                ask_bid_data.second_exchange_last_bid,
-                ask_bid_data.delta_points,
-                ask_bid_data.delta_percent,
-                ask_bid_data.target_delta,
-                ask_bid_data.spread_points,
-                ask_bid_data.spread_percent,
-                ask_bid_data.first_exchange_last_ask_entry,
-                ask_bid_data.first_exchange_last_bid_entry,
-                ask_bid_data.second_exchange_last_ask_entry,
-                ask_bid_data.second_exchange_last_bid_entry,
-                ask_bid_data.delta_points_entry,
-                ask_bid_data.delta_percent_entry,
-                ask_bid_data.spread_points_entry,
-                ask_bid_data.spread_percent_entry,
-                usdt,
-                data.px,
-                None if is_open else data.ts.split(' ')[1][:-3],
-                None if is_open else duration,
-                data.fee,
-                None if is_open else data.pnl
-            ]
+                row = [
+                    execution.position.id,
+                    execution.position.symbol.symbol,
+                    open_date,
+                    open_time,
+                    execution.position.mode,
+                    position_data.posSide,
+                    data.subType,
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    '',
+                    usdt,
+                    data.px,
+                    None if is_open else data.ts.split(' ')[1][:-3],
+                    None if is_open else duration,
+                    data.fee,
+                    None if is_open else data.pnl
+                ]
             for i, j in enumerate(row):
                 if isinstance(j, float):
                     if i in [15, 18, 24, 26]:
                         row[i] = f'{j:.2f}'
                     elif i in [16, 17, 19, 25, 27]:
                         row[i] = f'{j:.5f}'
-                    # else:
-                    #     row[i] = f'{j:.5f}'
             writer.writerow(row)
         f.seek(0)
         response = HttpResponse(f.read().replace('.', ','), content_type='text/csv')
@@ -425,6 +500,7 @@ class ExecutionAdmin(admin.ModelAdmin):
     list_filter = (
         'position__strategy', 'position__mode', 'position__is_open', 'position__id'
     )
+    ordering = ('-position', '-id')
 
     def get_queryset(self, request) -> QuerySet:
         qs = super().get_queryset(request)
@@ -446,7 +522,7 @@ class ExecutionAdmin(admin.ModelAdmin):
         data: dict = sort_data(obj.data, Execution.get_empty_data())
         return get_pretty_text(data)
 
-    @admin.display(description='Type')
+    @admin.display(description='Type', ordering='_type')
     def _type(self, obj) -> str:
         return obj.data.get('subType', '')
 
@@ -461,3 +537,45 @@ class ExecutionAdmin(admin.ModelAdmin):
         )
         usdt = base_coin * obj.data['px']
         return round(usdt, 2)
+
+
+@admin.register(Bill)
+class BillAdmin(admin.ModelAdmin):
+    list_display = (
+        'bill_id', 'account', '_sub_type', '_contract', '_inst_id', '_datetime', 'updated_at'
+    )
+    search_fields = ('bill_id',)
+    list_filter = ('account', BillInstrumentFilter, BillSubTypeFilter)
+    fields = ('bill_id', 'account', '_data', 'created_at', 'updated_at')
+    list_display_links = ('bill_id', 'account')
+    ordering = ('-bill_id',)
+
+    # def has_delete_permission(self, request, obj=None):
+    #     return False
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description='Data')
+    def _data(self, obj) -> str:
+        data: dict = sort_data(obj.data, Execution.get_empty_data())
+        return get_pretty_text(data)
+
+    @admin.display(description='Sub type')
+    def _sub_type(self, obj) -> str:
+        return obj.data.get('subType', '')
+
+    @admin.display(description='Contract size')
+    def _contract(self, obj) -> str:
+        return obj.data.get('sz', '')
+
+    @admin.display(description='Instrument ID')
+    def _inst_id(self, obj) -> str:
+        return obj.data.get('instId', '')
+
+    @admin.display(description='Datetime')
+    def _datetime(self, obj) -> str:
+        return obj.data.get('ts', '')

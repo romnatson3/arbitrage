@@ -36,7 +36,7 @@ def check_funding_time(strategy: Strategy, symbol: Symbol, position_side: str) -
     return True
 
 
-def fill_position_data(strategy: Strategy, position: Position, prices: dict) -> Position:
+def fill_position_data(strategy: Strategy, position: Position, prices: dict, prices_entry: dict) -> Position:
     position.ask_bid_data.update(
         first_exchange_previous_ask=prices['first_exchange_previous_ask'],
         first_exchange_last_ask=prices['first_exchange_last_ask'],
@@ -83,7 +83,6 @@ def fill_position_data(strategy: Strategy, position: Position, prices: dict) -> 
             delta_percent_entry=prices['delta_percent']
         )
     else:
-        _, _, prices_entry = get_ask_bid_prices_and_condition(strategy, position.symbol)
         position.ask_bid_data.update(
             first_exchange_last_ask_entry=prices_entry['first_exchange_last_ask'],
             first_exchange_last_bid_entry=prices_entry['first_exchange_last_bid'],
@@ -123,9 +122,10 @@ def open_trade_position(strategy: Strategy, symbol: Symbol, position_side: str, 
         f'Opening {position_side} position, size {strategy.position_size} usdt',
         extra=strategy.extra_log
     )
+    _, _, prices_entry = get_ask_bid_prices_and_condition(strategy, symbol)
     trade = OkxTrade(strategy, symbol, position_side)
     position = trade.open_position()
-    position = fill_position_data(strategy, position, prices)
+    position = fill_position_data(strategy, position, prices, prices_entry)
     sl_tp_data = Namespace(**position.sl_tp_data)
     if strategy.close_position_parts:
         if strategy.close_position_type == 'limit':

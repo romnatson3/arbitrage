@@ -1,6 +1,7 @@
 import logging
 import time
 import uuid
+from typing import Any
 from django.utils import timezone
 from django.conf import settings
 import okx.Trade as Trade
@@ -64,13 +65,13 @@ class OkxTrade():
             extra=self.strategy.extra_log
         )
         position: dict = self.get_position()
-        position: Position = self._save_position(position)
-        executions: list[dict] = self.get_executions(order_id)
+        position: Position = self.save_position(position)
+        executions: list[dict] = self.get_executions_by_order_id(order_id)
         for execution in executions:
-            self._save_executions(execution, position)
+            OkxTrade.save_execution(execution, position)
         return position
 
-    def _save_position(self, data: dict) -> Position:
+    def save_position(self, data: dict) -> Position:
         position = Position.objects.filter(
             position_data__posId=data['posId'], strategy=self.strategy,
             symbol=self.symbol, is_open=True
@@ -85,51 +86,45 @@ class OkxTrade():
         logger.info(f'Saved position {position}', extra=self.strategy.extra_log)
         return position
 
-    def get_executions(self, order_id: str) -> list:
-        if not isinstance(order_id, str):
-            order_id = str(order_id)
-        end_time = time.time() + settings.EXECUTION_RECEIVE_TIMEOUT
+    def get_executions_by_order_id(self, order_id: int) -> list[dict[str, Any]]:
+        if not isinstance(order_id, int):
+            order_id = int(order_id)
+        end_time = time.time() + settings.RECEIVE_TIMEOUT
         while time.time() < end_time:
             logger.debug(f'Trying to get executions for {order_id=}', extra=self.strategy.extra_log)
-            result = self.account.get_account_bills(instType='SWAP', mgnMode='isolated', type=2)
-            if result['code'] != '0':
-                raise GetExecutionException(result)
-            executions = []
-            for execution in result['data']:
-                if execution['ordId'] == order_id:
-                    e = convert_dict_values(execution)
-                    if Execution.sub_type.get(e['subType']):
-                        e['subType'] = Execution.sub_type[e['subType']]
-                    executions.append(convert_dict_values(execution))
-            if executions:
+            result = list(
+                self.strategy.second_account.bills
+                .filter(data__ordId=order_id).values_list('data', flat=True)
+            )
+            if result:
                 logger.info(
-                    f'Got {len(executions)} executions for {order_id=}',
+                    f'Got {len(result)} executions for {order_id=}',
                     extra=self.strategy.extra_log
                 )
-                return executions
+                return result
             time.sleep(2)
         raise GetExecutionException(
-            f'Not found any executions for {order_id=}. Timeout {settings.EXECUTION_RECEIVE_TIMEOUT}s reached'
+            f'Not found any executions for {order_id=}. Timeout {settings.RECEIVE_TIMEOUT}s reached'
         )
 
-    def _save_executions(self, data: dict, position: Position) -> Execution:
-        bill_id = data['billId']
-        trade_id = data['tradeId']
-        execution = Execution.objects.filter(bill_id=bill_id, trade_id=trade_id).first()
-        if execution:
-            logger.warning(
-                f'Execution {bill_id=} {trade_id=} already exists',
-                extra=self.strategy.extra_log
-            )
-            return execution
-        execution = Execution.objects.create(
-            data=data, position=position, bill_id=bill_id, trade_id=trade_id)
-        logger.info(
-            f'Saved execution {bill_id=}, {trade_id=}, subType={data["subType"]}, '
-            f'sz={data["sz"]}, px={data["px"]}, ordId={data["ordId"]}',
-            extra=self.strategy.extra_log
+    @staticmethod
+    def save_execution(data: dict, position: Position) -> None:
+        position.strategy._extra_log.update(symbol=position.symbol.symbol)
+        execution, created = Execution.objects.get_or_create(
+            bill_id=data['billId'], trade_id=data['tradeId'],
+            defaults={'data': data, 'position': position}
         )
-        return execution
+        if created:
+            logger.info(
+                f'Saved execution bill_id={data["billId"]}, trade_id={data["tradeId"]}, '
+                f'subType={data["subType"]}, sz={data["sz"]}, px={data["px"]}, ordId={data["ordId"]}',
+                extra=position.strategy.extra_log
+            )
+        else:
+            logger.warning(
+                f'Execution bill_id={data["billId"]}, trade_id={data["tradeId"]} already exists',
+                extra=position.strategy.extra_log
+            )
 
     def close_position(self, size_usdt: float, symbol: OkxSymbol = None, position_side: str = None) -> None:
         if not symbol:
@@ -591,13 +586,13 @@ def get_ask_bid_prices_and_condition(strategy: Strategy, symbol: Symbol) -> tupl
             extra=strategy.extra_log
         )
         first_exchange_delta_percent = (
-            (first_exchange_last_ask - first_exchange_previous_ask) / first_exchange_previous_ask * 100
+            (first_exchange_previous_ask - first_exchange_last_ask) / first_exchange_previous_ask * 100
         )
         second_exchange_delta_percent = (
-            (second_exchange_last_bid - second_exchange_previous_bid) / second_exchange_previous_bid * 100
+            (second_exchange_previous_bid - second_exchange_last_bid) / second_exchange_previous_bid * 100
         )
         position_side = 'short'
-        delta_points = (first_exchange_last_ask - second_exchange_last_bid) / symbol.okx.tick_size
+        delta_points = (second_exchange_last_bid - first_exchange_last_ask) / symbol.okx.tick_size
     spread_percent = (
         (second_exchange_last_ask - second_exchange_last_bid) / second_exchange_last_bid * 100
     )
@@ -608,7 +603,7 @@ def get_ask_bid_prices_and_condition(strategy: Strategy, symbol: Symbol) -> tupl
             f'{first_exchange_delta_percent=:.10f}, {second_exchange_delta_percent=:.10f}, {position_side=}',
             extra=strategy.extra_log
         )
-        target_profit = strategy.tp_second_price_percent if strategy.close_position_parts else strategy.target_profit
+        target_profit = strategy.tp_first_price_percent if strategy.close_position_parts else strategy.target_profit
         min_delta_percent = strategy.open_plus_close_fee + spread_percent + target_profit
         delta_percent = first_exchange_delta_percent - second_exchange_delta_percent
         if delta_percent >= min_delta_percent:

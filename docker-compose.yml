@@ -52,6 +52,7 @@ services:
 ######################## postgres
   postgres:
     image: postgres:latest
+    command: postgres -c 'max_connections=2000'
     env_file:
       - .env
     volumes:

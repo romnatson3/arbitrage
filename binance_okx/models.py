@@ -363,18 +363,30 @@ class Execution(BaseModel):
         return f'{self.position} - {self.bill_id}'
 
 
+class BillManager(models.Manager):
+    def get_queryset(self) -> QuerySet:
+        return (
+            super().get_queryset()
+            .select_related('account')
+        )
+
+
 class Bill(BaseModel):
     class Meta:
         verbose_name = 'Bill'
         verbose_name_plural = 'Bills'
         indexes = [
-            models.Index(models.F('data__billId'), name='bill_id_idx')
+            models.Index(models.F('data__ordId'), name='bill_ord_id_idx')
         ]
 
+    objects = BillManager()
+
+    bill_id = models.BigIntegerField('Bill ID', primary_key=True)
+    account = models.ForeignKey('Account', on_delete=models.CASCADE, related_name='bills')
     data = models.JSONField('Data', default=dict)
 
     def __str__(self):
-        return f'{self.id} - {self.data["billId"]}'
+        return str(self.bill_id)
 
 
 class PositionManager(models.Manager):
@@ -526,4 +538,4 @@ class Position(BaseModel):
         return self.position_data['avgPx']
 
     def __str__(self):
-        return f'{self.id}_{self.symbol}_{self.strategy}'
+        return f'{self.id}_{self.symbol}'

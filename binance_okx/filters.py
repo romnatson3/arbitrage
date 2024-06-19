@@ -1,5 +1,37 @@
 from django.contrib.admin import SimpleListFilter
-from .models import Strategy, Position
+from .models import Strategy, Position, Bill
+
+
+class BillInstrumentFilter(SimpleListFilter):
+    title = 'Instrument'
+    parameter_name = 'instrument'
+
+    def lookups(self, request, model_admin):
+        return [
+            (instrument, instrument)
+            for instrument in Bill.objects.values_list('data__instId', flat=True).order_by('data__instId').distinct()
+        ]
+
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(data__instId=self.value())
+        return queryset
+
+
+class BillSubTypeFilter(SimpleListFilter):
+    title = 'Sub Type'
+    parameter_name = 'sub_type'
+
+    def lookups(self, request, model_admin):
+        return [
+            (sub_type, sub_type)
+            for sub_type in Bill.objects.values_list('data__subType', flat=True).order_by('data__subType').distinct()
+        ]
+
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(data__subType=self.value())
+        return queryset
 
 
 class PositionSideFilter(SimpleListFilter):
@@ -13,10 +45,8 @@ class PositionSideFilter(SimpleListFilter):
         )
 
     def queryset(self, request, queryset):
-        if self.value() == 'long':
-            return queryset.filter(position_data__posSide='long')
-        if self.value() == 'short':
-            return queryset.filter(position_data__posSide='short')
+        if self.value():
+            return queryset.filter(position_data__posSide=self.value())
         return queryset
 
 
