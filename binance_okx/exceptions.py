@@ -24,3 +24,7 @@ class ClosePositionException(Exception):
 
 class GetExecutionException(Exception):
     pass
+
+
+class GetBillsException(Exception):
+    pass

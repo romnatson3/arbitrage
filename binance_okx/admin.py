@@ -478,11 +478,12 @@ class PositionAdmin(admin.ModelAdmin):
                         row[i] = f'{j:.2f}'
                     elif i in [16, 17, 19, 25, 27]:
                         row[i] = f'{j:.5f}'
+                    elif i in [32]:
+                        row[i] = f'{j:.8f}'
             writer.writerow(row)
         f.seek(0)
         response = HttpResponse(f.read().replace('.', ','), content_type='text/csv')
         response['Content-Disposition'] = 'attachment; filename="positions.csv"'
-        # self.message_user(request, f'Positions exported: {queryset.count()}')
         return response
 
 
@@ -542,7 +543,7 @@ class ExecutionAdmin(admin.ModelAdmin):
 @admin.register(Bill)
 class BillAdmin(admin.ModelAdmin):
     list_display = (
-        'bill_id', 'account', '_sub_type', '_contract', '_inst_id', '_datetime', 'updated_at'
+        'account', 'bill_id', '_order_id', '_sub_type', '_contract', '_inst_id', '_datetime', 'updated_at'
     )
     search_fields = ('bill_id',)
     list_filter = ('account', BillInstrumentFilter, BillSubTypeFilter)
@@ -579,3 +580,7 @@ class BillAdmin(admin.ModelAdmin):
     @admin.display(description='Datetime')
     def _datetime(self, obj) -> str:
         return obj.data.get('ts', '')
+
+    @admin.display(description='Order ID')
+    def _order_id(self, obj) -> str:
+        return obj.data.get('ordId', '')

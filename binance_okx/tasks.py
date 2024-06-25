@@ -6,7 +6,6 @@ from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.conf import settings
-from django.db import transaction
 from django.db.models import Func, Value, DateTimeField, CharField, F
 from django.db.models.expressions import RawSQL
 # from celery.utils.log import get_task_logger
@@ -17,7 +16,7 @@ import okx.Account
 from exchange.celery import app
 from .helper import CachePrice, TaskLock
 from .models import Strategy, Symbol, Account, Position, Execution, StatusLog, OkxSymbol, BinanceSymbol, Bill
-from .exceptions import GetPositionException, GetExecutionException, AcquireLockException
+from .exceptions import GetPositionException, AcquireLockException, GetBillsException
 from .misc import convert_dict_values
 from .trade import OkxTrade, get_ask_bid_prices_and_condition
 from .strategy import (
@@ -175,14 +174,17 @@ class OkxExchange():
                 before=bill_id
             )
         if result['code'] != '0':
-            raise GetExecutionException(result)
+            raise GetBillsException(result)
         bills = list(map(convert_dict_values, result['data']))
         for i in bills:
             i['subType'] = Execution.sub_type.get(i['subType'], i['subType'])
-        logger.info(
-            f'Found {len(bills)} new bills in exchange, before {bill_id=}, '
-            f'for account: {self.account.name}'
-        )
+        if bill_id:
+            logger.info(
+                f'Found {len(bills)} new bills in exchange, before {bill_id=}, '
+                f'for account: {self.account.name}'
+            )
+        else:
+            logger.info(f'Got {len(bills)} last bills from exchange for account: {self.account.name}')
         return bills
 
     def get_new_executions_for_position(self, position: Position) -> Optional[List[Dict[str, Any]]]:
@@ -190,7 +192,7 @@ class OkxExchange():
         end_time = time.time() + settings.RECEIVE_TIMEOUT
         last_bill_id = position.executions.values_list('bill_id', flat=True).order_by('bill_id').last()
         if not last_bill_id:
-            logger.info(
+            logger.debug(
                 f'No found any executions in database for position "{position}"',
                 extra=position.strategy.extra_log
             )
@@ -242,11 +244,17 @@ class OkxExchange():
                 return executions
             else:
                 if position.is_open:
-                    logger.debug(
-                        f'Not found any new executions for open position "{position}"',
-                        extra=position.strategy.extra_log
-                    )
-                    return
+                    if last_bill_id:
+                        logger.debug(
+                            f'Not found any new executions for open position "{position}"',
+                            extra=position.strategy.extra_log
+                        )
+                        return
+                    else:
+                        logger.warning(
+                            f'Not found any executions for open position "{position}"',
+                            extra=position.strategy.extra_log
+                        )
                 else:
                     logger.warning(
                         f'Not found any new executions for closed position "{position}"',
@@ -255,7 +263,7 @@ class OkxExchange():
             time.sleep(2)
         else:
             logger.critical(
-                f'Failed to get new executions for position "{position}"',
+                f'Failed to get executions for position "{position}"',
                 extra=position.strategy.extra_log
             )
 
@@ -333,33 +341,55 @@ def update_bills():
         with TaskLock('okx_task_update_bills'):
             accounts = Account.objects.filter(exchange='okx').all()
             if not accounts:
-                logger.debug('Update bills: No okx accounts found')
+                logger.debug('Update bills, no okx accounts found')
                 return
             for account in accounts:
                 try:
-                    bill_ids: set[int] = set(
+                    bills_ids: set[int] = set(
                         Bill.objects
                         .filter(account=account)
                         .values_list('bill_id', flat=True)
                     )
-                    last_bill_id: Optional[int] = max(bill_ids) if bill_ids else None
                     exchange = OkxExchange(account)
-                    bills = exchange.get_bills(last_bill_id)
+                    bills = exchange.get_bills()
                     if not bills:
                         continue
                     new_bills: list[Bill] = [
                         Bill(bill_id=b['billId'], account=account, data=b)
-                        for b in bills if b['billId'] not in bill_ids
+                        for b in bills if b['billId'] not in bills_ids
                     ]
                     if new_bills:
-                        with transaction.atomic():
-                            Bill.objects.bulk_create(new_bills)
-                            logger.info(f'Saved {len(new_bills)} new bills to db for account: {account.name}')
+                        Bill.objects.bulk_create(new_bills, ignore_conflicts=True)
+                        logger.info(f'Saved {len(new_bills)} bills to db for account: {account.name}')
+                        logger.info(f'Bill ids: {", ".join([str(b.bill_id) for b in new_bills])}')
                     else:
-                        logger.warning(f'All bills are already exist in db for account: {account.name}')
+                        logger.info(f'All bills are already exist in db for account: {account.name}')
                 except Exception as e:
                     logger.exception(e)
                     continue
+                # try:
+                #     bills_ids: set[int] = set(
+                #         Bill.objects
+                #         .filter(account=account)
+                #         .values_list('bill_id', flat=True)
+                #     )
+                #     exchange = OkxExchange(account)
+                #     last_bill_id: Optional[int] = max(bill_ids) if bill_ids else None
+                #     bills = exchange.get_bills(last_bill_id)
+                #     if not bills:
+                #         continue
+                #     new_bills: list[Bill] = [
+                #         Bill(bill_id=b['billId'], account=account, data=b)
+                #         for b in bills if b['billId'] not in bills_ids
+                #     ]
+                #     if new_bills:
+                #         bills = Bill.objects.bulk_create(new_bills, ignore_conflicts=True)
+                #         logger.info(f'Saved {len(new_bills)} new bills to db for account: {account.name}')
+                #     else:
+                #         logger.warning(f'All bills are already exist in db for account: {account.name}')
+                # except Exception as e:
+                #     logger.exception(e)
+                #     continue
     except AcquireLockException:
         logger.debug('Task update_bills is already running')
     except Exception as e:

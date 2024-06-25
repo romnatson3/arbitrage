@@ -71,28 +71,16 @@ def fill_position_data(strategy: Strategy, position: Position, prices: dict, pri
             position.entry_price, strategy.open_plus_close_fee,
             prices['spread_percent'], position.side
         )
-    if strategy.mode == Strategy.Mode.emulate:
-        position.ask_bid_data.update(
-            first_exchange_last_ask_entry=prices['first_exchange_last_ask'],
-            first_exchange_last_bid_entry=prices['first_exchange_last_bid'],
-            second_exchange_last_ask_entry=prices['second_exchange_last_ask'],
-            second_exchange_last_bid_entry=prices['second_exchange_last_bid'],
-            spread_points_entry=prices['spread_points'],
-            spread_percent_entry=prices['spread_percent'],
-            delta_points_entry=prices['delta_points'],
-            delta_percent_entry=prices['delta_percent']
-        )
-    else:
-        position.ask_bid_data.update(
-            first_exchange_last_ask_entry=prices_entry['first_exchange_last_ask'],
-            first_exchange_last_bid_entry=prices_entry['first_exchange_last_bid'],
-            second_exchange_last_ask_entry=prices_entry['second_exchange_last_ask'],
-            second_exchange_last_bid_entry=prices_entry['second_exchange_last_bid'],
-            spread_points_entry=prices_entry['spread_points'],
-            spread_percent_entry=prices_entry['spread_percent'],
-            delta_points_entry=prices_entry['delta_points'],
-            delta_percent_entry=prices_entry['delta_percent']
-        )
+    position.ask_bid_data.update(
+        first_exchange_last_ask_entry=prices_entry['first_exchange_last_ask'],
+        first_exchange_last_bid_entry=prices_entry['first_exchange_last_bid'],
+        second_exchange_last_ask_entry=prices_entry['second_exchange_last_ask'],
+        second_exchange_last_bid_entry=prices_entry['second_exchange_last_bid'],
+        spread_points_entry=prices_entry['spread_points'],
+        spread_percent_entry=prices_entry['spread_percent'],
+        delta_points_entry=prices_entry['delta_points'],
+        delta_percent_entry=prices_entry['delta_percent']
+    )
     logger.info(f'Filled position data for "{position}"', extra=strategy.extra_log)
     position.save(update_fields=['ask_bid_data', 'sl_tp_data'])
     return position
@@ -216,7 +204,7 @@ def open_emulate_position(strategy: Strategy, symbol: Symbol, position_side: str
         return
     trade = OkxEmulateTrade(strategy, symbol)
     position = trade.create_position(position_side)
-    fill_position_data(strategy, position, prices)
+    fill_position_data(strategy, position, prices, prices)
 
 
 def watch_emulate_position(strategy: Strategy, position: Position) -> None:

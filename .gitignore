@@ -9,3 +9,4 @@ media/
 .vimspector.session
 dumps/
 ws_async.py
+exchange.service

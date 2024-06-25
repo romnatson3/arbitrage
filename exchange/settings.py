@@ -29,7 +29,7 @@ DEBUG = bool(int(os.environ.get('DJANGO_DEBUG', 0)))
 
 ALLOWED_HOSTS = ['*']
 
-CSRF_TRUSTED_ORIGINS = ['http://*', 'http://37.27.9.209:8000']
+CSRF_TRUSTED_ORIGINS = os.environ.get('DJANGO_CSRF_TRUSTED_ORIGINS', []).split(',')
 
 INTERNAL_IPS = ['127.0.0.1',]
 
@@ -256,4 +256,4 @@ DATA_UPLOAD_MAX_NUMBER_FIELDS = 10240
 
 OKX_FLAG = os.environ.get('OKX_FLAG')
 
-RECEIVE_TIMEOUT = 30
+RECEIVE_TIMEOUT = 60

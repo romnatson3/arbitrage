@@ -47,7 +47,7 @@ app.conf.update(
         },
         'update_ask_bid_price': {
             'task': 'binance_okx.tasks.update_ask_bid_price',
-            'schedule': 5,
+            'schedule': 1,
         },
         'update_symbols': {
             'task': 'binance_okx.tasks.update_symbols',
@@ -93,6 +93,9 @@ class TaskFormatter(CeleryTaskFormatter):
 @after_setup_task_logger.connect
 def setup_task_logger(logger, *args, **kwargs):
     for handler in logger.handlers:
-        handler.setFormatter(TaskFormatter(
-            '[%(asctime)s] %(short_task_id)s %(levelname)-7s %(name)-17s [%(created_by)s] [%(strategy)s] [%(symbol)s] %(message)s'
-        ))
+        tf = TaskFormatter(
+            '[%(asctime)s] %(short_task_id)s %(levelname)-7s %(name)-17s '
+            '[%(created_by)s] [%(strategy)s] [%(symbol)s] %(message)s'
+        )
+        tf.datefmt = '%d-%m-%Y %H:%M:%S'
+        handler.setFormatter(tf)
