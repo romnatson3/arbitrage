@@ -1,5 +1,15 @@
+volumes:
+  exchange_postgres:
+  exchange_redis:
+  exchange_static:
+  exchange_rabbitmq:
+  exchange_ask_bid:
+
+networks:
+  layer:
+    driver: bridge
+
 services:
-######################## admin
   web:
     image: exchange:latest
     deploy:
@@ -24,7 +34,7 @@ services:
       options:
         tag: exchange_web
         syslog-facility: local5
-######################## rabbitmq
+
   rabbitmq:
     image: rabbitmq:management
     env_file:
@@ -36,7 +46,7 @@ services:
       - "38692:15692"
     networks:
       - layer
-######################## nginx
+
   nginx:
     image: nginx:latest
     restart: always
@@ -49,7 +59,7 @@ services:
       - web
     networks:
       - layer
-######################## postgres
+
   postgres:
     image: postgres:latest
     command: postgres -c 'max_connections=2000'
@@ -59,7 +69,7 @@ services:
       - exchange_postgres:/var/lib/postgresql/data
     networks:
       - layer
-######################## redis
+
   redis:
     image: redis:latest
     entrypoint: redis-server --appendonly yes --maxmemory-policy volatile-ttl --aof-use-rdb-preamble yes --save "" --maxclients 65000
@@ -67,7 +77,7 @@ services:
       - exchange_redis:/data
     networks:
       - layer
-######################## flower
+
   flower:
     image: exchange:latest
     entrypoint: celery -A exchange flower -l INFO --host=0.0.0.0 --port=5555
@@ -80,7 +90,7 @@ services:
       - rabbitmq
     networks:
       - layer
-######################## beat scheduler
+
   beat:
     image: exchange:latest
     entrypoint: sh -c "sleep 5 && celery -A exchange beat -l INFO --scheduler django_celery_beat.schedulers:DatabaseScheduler"
@@ -97,7 +107,9 @@ services:
       - position
       - trade
       - emulate
-      - websocket
+      - websocket_okx_orders
+      - websocket_okx_ask_bid
+      - websocket_binance_ask_bid
     env_file:
       - .env
     networks:
@@ -107,7 +119,7 @@ services:
       options:
         tag: exchange_scheduler
         syslog-facility: local5
-######################## queue default
+
   default:
     image: exchange:latest
     entrypoint: celery -A exchange worker -c 5 -l INFO -Q default
@@ -129,7 +141,7 @@ services:
       options:
         tag: exchange_default
         syslog-facility: local5
-######################## queue position
+
   position:
     image: exchange:latest
     entrypoint: celery -A exchange worker -c 15 -l INFO -Q position
@@ -151,7 +163,7 @@ services:
       options:
         tag: exchange_position
         syslog-facility: local5
-######################## queue trade
+
   trade:
     image: exchange:latest
     entrypoint: celery -A exchange worker -c 10 -l INFO -Q trade
@@ -173,7 +185,7 @@ services:
       options:
         tag: exchange_trade
         syslog-facility: local5
-######################## queue emulate
+
   emulate:
     image: exchange:latest
     entrypoint: celery -A exchange worker -c 10 -l INFO -Q emulate
@@ -195,10 +207,10 @@ services:
       options:
         tag: exchange_emulate
         syslog-facility: local5
-######################## queue websocket
-  websocket:
+
+  websocket_okx_orders:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 2 -l INFO -Q websocket
+    entrypoint: celery -A exchange worker -c 2 -l INFO -Q websocket_okx_orders
     deploy:
       mode: replicated
       replicas: 1
@@ -215,15 +227,51 @@ services:
     logging:
       driver: syslog
       options:
-        tag: exchange_websocket
+        tag: exchange_websocket_okx_orders
         syslog-facility: local5
 
-volumes:
-  exchange_postgres:
-  exchange_redis:
-  exchange_static:
-  exchange_rabbitmq:
+  websocket_okx_ask_bid:
+    image: exchange:latest
+    entrypoint: celery -A exchange worker -c 1 -l INFO -Q websocket_okx_ask_bid
+    deploy:
+      mode: replicated
+      replicas: 1
+    restart: always
+    depends_on:
+      - rabbitmq
+      - redis
+      - postgres
+      - web
+    env_file:
+      - .env
+    networks:
+      - layer
+    logging:
+      driver: syslog
+      options:
+        tag: exchange_websocket_okx_ask_bid
+        syslog-facility: local5
 
-networks:
-  layer:
-    driver: bridge
+  websocket_binance_ask_bid:
+    image: exchange:latest
+    entrypoint: celery -A exchange worker -c 1 -l INFO -Q websocket_binance_ask_bid
+    deploy:
+      mode: replicated
+      replicas: 1
+    restart: always
+    depends_on:
+      - rabbitmq
+      - redis
+      - postgres
+      - web
+    env_file:
+      - .env
+    volumes:
+      - exchange_ask_bid:/opt/ask_bid
+    networks:
+      - layer
+    logging:
+      driver: syslog
+      options:
+        tag: exchange_websocket_binance_ask_bid
+        syslog-facility: local5

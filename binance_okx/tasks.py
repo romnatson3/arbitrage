@@ -25,10 +25,11 @@ from .strategy import (
 )
 from .handlers import save_filled_limit_order_id
 from .ws import WebSocketOrders
+from .ws_ask_bid import WebSocketOkxAskBid, WebSocketBinaceAskBid
+from .handlers import write_ask_bid_to_csv_by_symbol, save_ask_bid_to_cache
 
 
 logger = logging.getLogger(__name__)
-FLAG = settings.OKX_FLAG
 
 
 # logger = get_task_logger(__name__)
@@ -45,7 +46,7 @@ def clean_db_log(days: int = 5) -> None:
 
 
 def update_okx_symbols() -> None:
-    public_api = okx.PublicData.PublicAPI(flag=FLAG)
+    public_api = okx.PublicData.PublicAPI(flag=settings.OKX_FLAG)
     result = public_api.get_instruments(instType='SWAP')
     symbols = result['data']
     for i in symbols:
@@ -87,7 +88,7 @@ def update_symbols() -> None:
 def update_okx_market_price() -> None:
     try:
         with TaskLock('okx_task_update_market_price'):
-            client = okx.PublicData.PublicAPI(flag=FLAG)
+            client = okx.PublicData.PublicAPI(flag=settings.OKX_FLAG)
             result = client.get_mark_price(instType='SWAP')
             for i in result['data']:
                 symbol = ''.join(i['instId'].split('-')[:-1])
@@ -105,7 +106,7 @@ def update_okx_market_price() -> None:
 def update_okx_ask_bid_price() -> None:
     try:
         with TaskLock('okx_task_update_ask_bid_price'):
-            client = okx.MarketData.MarketAPI(flag=FLAG)
+            client = okx.MarketData.MarketAPI(flag=settings.OKX_FLAG)
             result = client.get_tickers(instType='SWAP')
             cache_price = CachePrice('okx')
             for i in result['data']:
@@ -453,9 +454,9 @@ def emulate_strategy_for_symbol(strategy_id: int, symbol: str) -> None:
 
 
 @app.task
-def run_websocket_orders() -> None:
+def run_websocket_okx_orders() -> None:
     try:
-        with TaskLock('task_run_websocket_orders'):
+        with TaskLock('task_run_websocket_okx_orders'):
             threads = {i.name: i for i in threading.enumerate()}
             accounts = Account.objects.filter(exchange='okx').all()
             if not accounts:
@@ -477,6 +478,61 @@ def run_websocket_orders() -> None:
                 time.sleep(3)
     except AcquireLockException:
         logger.debug('Task run_websocket_orders is already running')
+    except Exception as e:
+        logger.exception(e)
+        raise e
+
+
+ws_okx_ask_bid = WebSocketOkxAskBid()
+ws_binance_ask_bid = WebSocketBinaceAskBid()
+
+
+@app.task
+def run_websocket_okx_ask_bid() -> None:
+    try:
+        with TaskLock('task_run_websocket_okx_ask_bid'):
+            ws_okx_ask_bid._threads.update(
+                (i.name, i) for i in threading.enumerate() if i.name in ws_okx_ask_bid._threads
+            )
+            for name, thread in ws_okx_ask_bid._threads.items():
+                if not thread or not thread.is_alive():
+                    logger.warning(f'WebSocketOkxAskBid thread "{name}" is not running')
+                    ws_okx_ask_bid._kill()
+                    break
+            else:
+                logger.debug('WebSocketOkxAskBid all threads are running')
+                return
+            ws_okx_ask_bid.start()
+            ws_okx_ask_bid.add_handler(save_ask_bid_to_cache)
+            time.sleep(3)
+    except AcquireLockException:
+        logger.debug('Task run_websocket_okx_ask_bid is already running')
+    except Exception as e:
+        logger.exception(e)
+        raise e
+
+
+@app.task
+def run_websocket_binance_ask_bid() -> None:
+    try:
+        with TaskLock('task_run_websocket_binance_ask_bid'):
+            ws_binance_ask_bid._threads.update(
+                (i.name, i) for i in threading.enumerate() if i.name in ws_binance_ask_bid._threads
+            )
+            for name, thread in ws_binance_ask_bid._threads.items():
+                if not thread or not thread.is_alive():
+                    logger.warning(f'WebSocketBinaceAskBid thread "{name}" is not running')
+                    ws_binance_ask_bid._kill()
+                    break
+            else:
+                logger.debug('WebSocketBinaceAskBid all threads are running')
+                return
+            ws_binance_ask_bid.start()
+            ws_binance_ask_bid.add_handler(save_ask_bid_to_cache)
+            ws_binance_ask_bid.add_handler(write_ask_bid_to_csv_by_symbol)
+            time.sleep(3)
+    except AcquireLockException:
+        logger.debug('Task run_websocket_binance_ask_bid is already running')
     except Exception as e:
         logger.exception(e)
         raise e

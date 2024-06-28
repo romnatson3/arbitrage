@@ -30,11 +30,21 @@ app.conf.update(
         'binance_okx.tasks.run_strategy': {'queue': 'position'},
         'binance_okx.tasks.trade_strategy_for_symbol': {'queue': 'trade'},
         'binance_okx.tasks.emulate_strategy_for_symbol': {'queue': 'emulate'},
-        'binance_okx.tasks.run_websocket_orders': {'queue': 'websocket'},
+        'binance_okx.tasks.run_websocket_okx_orders': {'queue': 'websocket_okx_orders'},
+        'binance_okx.tasks.run_websocket_okx_ask_bid': {'queue': 'websocket_okx_ask_bid'},
+        'binance_okx.tasks.run_websocket_binance_ask_bid': {'queue': 'websocket_binance_ask_bid'},
     },
     beat_schedule={
-        'run_websocket_orders': {
-            'task': 'binance_okx.tasks.run_websocket_orders',
+        'run_websocket_okx_ask_bid': {
+            'task': 'binance_okx.tasks.run_websocket_okx_ask_bid',
+            'schedule': crontab(minute='*/5'),
+        },
+        'run_websocket_binance_ask_bid': {
+            'task': 'binance_okx.tasks.run_websocket_binance_ask_bid',
+            'schedule': crontab(minute='*/5'),
+        },
+        'run_websocket_okx_orders': {
+            'task': 'binance_okx.tasks.run_websocket_okx_orders',
             'schedule': crontab(minute='*/5'),
         },
         'check_if_position_is_closed': {
