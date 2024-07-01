@@ -77,13 +77,15 @@ class OkxTrade():
             symbol=self.symbol, is_open=True
         ).last()
         if position:
-            logger.warning(f'Position "{position}" already exists', extra=self.strategy.extra_log)
+            self.strategy._extra_log.update(position=position.id)
+            logger.warning('Position already exists', extra=self.strategy.extra_log)
             position.position_data = data
             position.save()
-            logger.debug(f'Updated position {position}', extra=self.strategy.extra_log)
+            logger.debug('Updated position', extra=self.strategy.extra_log)
             return position
         position = Position.objects.create(position_data=data, strategy=self.strategy, symbol=self.symbol)
-        logger.info(f'Saved position {position}', extra=self.strategy.extra_log)
+        self.strategy._extra_log.update(position=position.id)
+        logger.info('Saved position', extra=self.strategy.extra_log)
         return position
 
     def get_executions_by_order_id(self, order_id: int) -> list[dict[str, Any]]:
@@ -109,7 +111,7 @@ class OkxTrade():
 
     @staticmethod
     def save_execution(data: dict, position: Position) -> None:
-        position.strategy._extra_log.update(symbol=position.symbol.symbol)
+        position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
         execution, created = Execution.objects.get_or_create(
             bill_id=data['billId'], trade_id=data['tradeId'],
             defaults={'data': data, 'position': position}
@@ -415,7 +417,8 @@ class OkxEmulateTrade():
             strategy=self.strategy, symbol=self.symbol, mode=Strategy.Mode.emulate,
             position_data=position_data
         )
-        logger.info(f'Created virtual position "{position}"', extra=self.strategy.extra_log)
+        self.strategy._extra_log.update(position=position.id)
+        logger.info('Created virtual position', extra=self.strategy.extra_log)
         self._create_open_execution(position)
         return position
 
@@ -428,12 +431,12 @@ class OkxEmulateTrade():
             position.is_open = False
             position.save(update_fields=['is_open'])
             logger.warning(
-                f'Virtual position "{position}" is closed completely {size_usdt=}',
+                f'Virtual position is closed completely {size_usdt=}',
                 extra=self.strategy.extra_log
             )
         else:
             logger.warning(
-                f'Virtual position "{position}" is closed partially {size_usdt=}',
+                f'Virtual position is closed partially {size_usdt=}',
                 extra=self.strategy.extra_log
             )
             position.position_data['pos'] -= sz

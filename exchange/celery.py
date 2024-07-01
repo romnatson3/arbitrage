@@ -37,15 +37,15 @@ app.conf.update(
     beat_schedule={
         'run_websocket_okx_ask_bid': {
             'task': 'binance_okx.tasks.run_websocket_okx_ask_bid',
-            'schedule': crontab(minute='*/5'),
+            'schedule': crontab(minute='*/1'),
         },
         'run_websocket_binance_ask_bid': {
             'task': 'binance_okx.tasks.run_websocket_binance_ask_bid',
-            'schedule': crontab(minute='*/5'),
+            'schedule': crontab(minute='*/1'),
         },
         'run_websocket_okx_orders': {
             'task': 'binance_okx.tasks.run_websocket_okx_orders',
-            'schedule': crontab(minute='*/5'),
+            'schedule': crontab(minute='*/1'),
         },
         'check_if_position_is_closed': {
             'task': 'binance_okx.tasks.check_if_position_is_closed',
@@ -93,6 +93,7 @@ class TaskFormatter(CeleryTaskFormatter):
         record.__dict__.setdefault('created_by', '')
         record.__dict__.setdefault('strategy', '')
         record.__dict__.setdefault('symbol', '')
+        record.__dict__.setdefault('position', '')
         if record.levelno == logging.INFO and re.search(r'success', record.msg.lower()):
             formatter = CeleryTaskFormatter(self.success_fmt)
             return formatter.format(record)
@@ -104,8 +105,8 @@ class TaskFormatter(CeleryTaskFormatter):
 def setup_task_logger(logger, *args, **kwargs):
     for handler in logger.handlers:
         tf = TaskFormatter(
-            '[%(asctime)s] %(short_task_id)s %(levelname)-7s %(name)-17s '
-            '[%(created_by)s] [%(strategy)s] [%(symbol)s] %(message)s'
+            '[%(asctime)s.%(msecs)03d] %(short_task_id)s %(levelname)-7s %(name)-17s '
+            '[%(created_by)s] [%(strategy)s] [%(symbol)s] [%(position)s] %(message)s',
         )
         tf.datefmt = '%d-%m-%Y %H:%M:%S'
         handler.setFormatter(tf)

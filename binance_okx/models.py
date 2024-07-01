@@ -64,6 +64,7 @@ class StatusLog(BaseModel):
         help_text='Strategy', null=True
     )
     symbol = models.CharField(max_length=20, blank=True, null=True)
+    position = models.CharField(max_length=20, blank=True, null=True)
 
 
 class Account(BaseModel):
@@ -229,6 +230,8 @@ class Strategy(BaseModel):
     time_to_funding = models.IntegerField('Time to funding', default=0, help_text='Time to funding, minutes')
     only_profit = models.BooleanField('Only profit', default=False, help_text='Trading only in the direction of funding')
     mode = models.CharField('Mode', choices=Mode.choices, default=Mode.trade, help_text='Algorithm mode')
+    search_duration = models.IntegerField('Search duration', default=0, help_text='Search duration, seconds')
+    simultaneous_opening_positions = models.BooleanField('Simultaneous opening of positions', default=False)
 
     def _create_task(self) -> PeriodicTask:
         task_name = f'strategy_{self.id}'
@@ -263,7 +266,8 @@ class Strategy(BaseModel):
         self._extra_log = dict(
             created_by=None,
             strategy=self,
-            symbol=None
+            symbol=None,
+            position=None
         )
 
     @property
@@ -538,4 +542,4 @@ class Position(BaseModel):
         return self.position_data['avgPx']
 
     def __str__(self):
-        return f'{self.id}_{self.symbol}'
+        return str(self.id)

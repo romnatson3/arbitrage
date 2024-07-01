@@ -23,10 +23,8 @@ from .strategy import (
     open_trade_position, watch_trade_position, open_emulate_position,
     watch_emulate_position
 )
-from .handlers import save_filled_limit_order_id
-from .ws import WebSocketOrders
-from .ws_ask_bid import WebSocketOkxAskBid, WebSocketBinaceAskBid
-from .handlers import write_ask_bid_to_csv_by_symbol, save_ask_bid_to_cache
+from .ws import WebSocketOkxAskBid, WebSocketBinaceAskBid, WebSocketOkxOrders
+from .handlers import write_ask_bid_to_csv_by_symbol, save_ask_bid_to_cache, save_filled_limit_order_id
 
 
 logger = logging.getLogger(__name__)
@@ -189,19 +187,15 @@ class OkxExchange():
         return bills
 
     def get_new_executions_for_position(self, position: Position) -> Optional[List[Dict[str, Any]]]:
-        position.strategy._extra_log.update(symbol=position.symbol.symbol)
+        position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
         end_time = time.time() + settings.RECEIVE_TIMEOUT
         last_bill_id = position.executions.values_list('bill_id', flat=True).order_by('bill_id').last()
         if not last_bill_id:
-            logger.debug(
-                f'No found any executions in database for position "{position}"',
-                extra=position.strategy.extra_log
-            )
+            logger.debug('No found any executions in database', extra=position.strategy.extra_log)
         while time.time() < end_time:
             if last_bill_id:
                 logger.debug(
-                    f'Trying to get new executions for position "{position}", '
-                    f'before bill_id: {last_bill_id}',
+                    f'Trying to get new executions before bill_id: {last_bill_id}',
                     extra=position.strategy.extra_log
                 )
                 where = {
@@ -211,8 +205,8 @@ class OkxExchange():
                 }
             else:
                 logger.debug(
-                    f'Trying to get new executions for position "{position}", '
-                    f'after position creation time "{position.position_data["cTime"]}"',
+                    'Trying to get new executions after position creation '
+                    f'time "{position.position_data["cTime"]}"',
                     extra=position.strategy.extra_log
                 )
                 where = {
@@ -239,54 +233,43 @@ class OkxExchange():
             )
             if executions:
                 logger.info(
-                    f'Found {len(executions)} executions for position "{position}"',
-                    extra=position.strategy.extra_log
+                    f'Found {len(executions)} executions', extra=position.strategy.extra_log
                 )
                 return executions
             else:
                 if position.is_open:
                     if last_bill_id:
                         logger.debug(
-                            f'Not found any new executions for open position "{position}"',
+                            'Not found any new executions for open position',
                             extra=position.strategy.extra_log
                         )
                         return
                     else:
                         logger.warning(
-                            f'Not found any executions for open position "{position}"',
+                            'Not found any executions for open position',
                             extra=position.strategy.extra_log
                         )
                 else:
                     logger.warning(
-                        f'Not found any new executions for closed position "{position}"',
+                        'Not found any new executions for closed position',
                         extra=position.strategy.extra_log
                     )
             time.sleep(2)
         else:
             logger.critical(
-                f'Failed to get executions for position "{position}"',
-                extra=position.strategy.extra_log
+                'Failed to get executions', extra=position.strategy.extra_log
             )
 
     def check_single_position(self, position: Position, open_positions: Dict[str, Any]) -> None:
         try:
-            position.strategy._extra_log.update(symbol=position.symbol.symbol)
+            position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
             if position.symbol.okx.inst_id in open_positions:
-                logger.debug(
-                    f'Position "{position}" is still open in exchange',
-                    extra=position.strategy.extra_log
-                )
+                logger.debug('Position is still open in exchange', extra=position.strategy.extra_log)
             else:
-                logger.warning(
-                    f'Position {position} is closed in exchange',
-                    extra=position.strategy.extra_log
-                )
+                logger.warning('Position is closed in exchange', extra=position.strategy.extra_log)
                 position.is_open = False
                 position.save()
-                logger.info(
-                    f'Position "{position}" is closed in database',
-                    extra=position.strategy.extra_log
-                )
+                logger.info('Position is closed in database', extra=position.strategy.extra_log)
             executions = self.get_new_executions_for_position(position)
             if executions:
                 for execution in executions:
@@ -416,10 +399,10 @@ def trade_strategy_for_symbol(strategy_id: int, symbol: str) -> None:
     try:
         strategy = Strategy.objects.cache(id=strategy_id)[0]
         symbol = Symbol.objects.get(symbol=symbol)
-        strategy._extra_log.update(symbol=symbol.symbol)
         with TaskLock(f'task_strategy_{strategy_id}_{symbol.symbol}'):
             position = strategy.positions.filter(symbol=symbol, is_open=True).last()
             if position:
+                strategy._extra_log.update(symbol=symbol.symbol, position=position.id)
                 watch_trade_position(strategy, position)
                 return
             condition_met, position_side, prices = get_ask_bid_prices_and_condition(strategy, symbol)
@@ -437,10 +420,10 @@ def emulate_strategy_for_symbol(strategy_id: int, symbol: str) -> None:
     try:
         strategy = Strategy.objects.cache(id=strategy_id)[0]
         symbol = Symbol.objects.get(symbol=symbol)
-        strategy._extra_log.update(symbol=symbol.symbol)
         with TaskLock(f'task_emulate_strategy_{strategy_id}_{symbol.symbol}'):
             position = strategy.positions.filter(symbol=symbol, is_open=True).last()
             if position:
+                strategy._extra_log.update(symbol=symbol.symbol, position=position.id)
                 watch_emulate_position(strategy, position)
                 return
             condition_met, position_side, prices = get_ask_bid_prices_and_condition(strategy, symbol)
@@ -457,27 +440,27 @@ def emulate_strategy_for_symbol(strategy_id: int, symbol: str) -> None:
 def run_websocket_okx_orders() -> None:
     try:
         with TaskLock('task_run_websocket_okx_orders'):
-            threads = {i.name: i for i in threading.enumerate()}
             accounts = Account.objects.filter(exchange='okx').all()
             if not accounts:
-                logger.debug('No okx accounts found')
+                logger.debug('WebSocketOkxOrders: No okx accounts found')
                 return
+            threads = {i.name: i for i in threading.enumerate()}
             for account in accounts:
-                name = f'run_forever_{account.id}'
+                name = f'run_forever_okx_orders_{account.id}'
                 if name in threads:
                     thread = threads[name]
                     if thread.is_alive():
-                        logger.debug(f'WebSocketOrders is already running for account: {account.name}')
+                        logger.debug(f'WebSocketOkxOrders is already running for account: {account.name}')
                         continue
                     else:
-                        logger.debug(f'WebSocketOrders is exist but not running for account: {account.name}')
+                        logger.debug(f'WebSocketOkxOrders is exist but not running for account: {account.name}')
                         thread._kill()
-                ws_orders = WebSocketOrders(account)
-                ws_orders.start()
-                ws_orders.add_handler(save_filled_limit_order_id)
+                ws_okx_orders = WebSocketOkxOrders(account)
+                ws_okx_orders.start()
+                ws_okx_orders.add_handler(save_filled_limit_order_id)
                 time.sleep(3)
     except AcquireLockException:
-        logger.debug('Task run_websocket_orders is already running')
+        logger.debug('Task run_websocket_okx_orders is already running')
     except Exception as e:
         logger.exception(e)
         raise e

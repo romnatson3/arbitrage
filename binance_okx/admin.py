@@ -59,15 +59,15 @@ class UserAdmin(BaseUserAdmin):
 @admin.register(StatusLog)
 class StatusLogAdmin(admin.ModelAdmin):
     list_display = (
-        'colored_msg', 'strategy', 'symbol', 'create_datetime_format'
+        'colored_msg', 'position', 'strategy', 'symbol', 'create_datetime_format'
     )
     list_display_links = ('colored_msg',)
-    list_filter = ('level', 'symbol')
+    list_filter = ('level', 'symbol', 'position')
     list_per_page = 50
     search_fields = ('msg', 'trace')
     fields = (
         'level', 'colored_msg', 'traceback', 'create_datetime_format', 'created_by',
-        'strategy', 'symbol'
+        'strategy', 'symbol', 'position'
     )
 
     @admin.display(description='Message')
@@ -203,7 +203,7 @@ class StrategyAdmin(admin.ModelAdmin):
     search_fields = ('name',)
     list_filter = ()
     fieldsets = (
-        (None, {'fields': ('id', 'name', 'enabled', 'mode')}),
+        (None, {'fields': ('id', 'name', 'enabled', 'mode', 'search_duration', 'simultaneous_opening_positions')}),
         (None, {'fields': (('first_account', 'second_account'),)}),
         (None, {'fields': ('symbols',)}),
         (
@@ -490,7 +490,7 @@ class PositionAdmin(admin.ModelAdmin):
 @admin.register(Execution)
 class ExecutionAdmin(admin.ModelAdmin):
     list_display = (
-        'id', 'position', '_type', '_contract', '_amount', 'bill_id', 'trade_id',
+        'id', 'position', '_type', '_contract', '_amount', '_px', 'bill_id', 'trade_id',
         'updated_at'
     )
     fields = (
@@ -538,6 +538,10 @@ class ExecutionAdmin(admin.ModelAdmin):
         )
         usdt = base_coin * obj.data['px']
         return round(usdt, 2)
+
+    @admin.display(description='Px')
+    def _px(self, obj) -> str:
+        return obj.data.get('px', '')
 
 
 @admin.register(Bill)

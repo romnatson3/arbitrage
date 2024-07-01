@@ -7,6 +7,7 @@ class CustomFormatter(logging.Formatter):
         record.__dict__.setdefault('created_by', '')
         record.__dict__.setdefault('strategy', '')
         record.__dict__.setdefault('symbol', '')
+        record.__dict__.setdefault('position', '')
         return formatter.format(record)
 
 
@@ -21,6 +22,7 @@ class DatabaseLogHandler(logging.Handler):
         created_by = record.__dict__.get('created_by')
         strategy = record.__dict__.get('strategy')
         symbol = record.__dict__.get('symbol')
+        position = record.__dict__.get('position')
         kwargs = {
             'logger_name': record.name,
             'level': record.levelno,
@@ -28,7 +30,8 @@ class DatabaseLogHandler(logging.Handler):
             'trace': trace,
             'created_by': created_by,
             'strategy': strategy,
-            'symbol': symbol
+            'symbol': symbol,
+            'position': position
         }
         if strategy:
             StatusLog.objects.create(**kwargs)

@@ -197,7 +197,8 @@ LOGGING = {
             'datefmt': '%d.%m.%Y %H:%M:%S'
         },
         'custom': {
-            'format': '[%(asctime)s] %(levelname)-7s %(name)-17s [%(created_by)s] [%(strategy)s] [%(symbol)s] %(message)s',
+            'format': '[%(asctime)s] %(levelname)-7s %(name)-17s [%(created_by)s] '
+                      '[%(strategy)s] [%(symbol)s] [%(position)s] %(message)s',
             'datefmt': '%d.%m.%Y %H:%M:%S',
             'class': 'binance_okx.logger.CustomFormatter',
         },
