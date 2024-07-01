@@ -14,7 +14,7 @@ import okx.MarketData
 import okx.PublicData
 import okx.Account
 from exchange.celery import app
-from .helper import CachePrice, TaskLock
+from .helper import TaskLock
 from .models import Strategy, Symbol, Account, Position, Execution, StatusLog, OkxSymbol, BinanceSymbol, Bill
 from .exceptions import GetPositionException, AcquireLockException, GetBillsException
 from .misc import convert_dict_values
@@ -100,50 +100,6 @@ def update_okx_market_price() -> None:
     logger.info(f'Updated okx market prices for {len(result["data"])} symbols')
 
 
-@app.task
-def update_okx_ask_bid_price() -> None:
-    try:
-        with TaskLock('okx_task_update_ask_bid_price'):
-            client = okx.MarketData.MarketAPI(flag=settings.OKX_FLAG)
-            result = client.get_tickers(instType='SWAP')
-            cache_price = CachePrice('okx')
-            for i in result['data']:
-                symbol = ''.join(i['instId'].split('-')[:-1])
-                cache_price.push_ask(symbol, i['askPx'])
-                cache_price.push_bid(symbol, i['bidPx'])
-    except AcquireLockException:
-        logger.debug('Task update_okx_ask_bid_price is already running')
-    except Exception as e:
-        logger.exception(e)
-        raise e
-    logger.info(f'Updated okx ask/bid prices for {len(result["data"])} symbols')
-
-
-@app.task
-def update_binance_ask_bid_price() -> None:
-    try:
-        with TaskLock('binance_task_update_ask_bid_price'):
-            client = UMFutures(show_limit_usage=True)
-            result = client.book_ticker(symbol=None)
-            cache_price = CachePrice('binance')
-            for i in result['data']:
-                symbol = i['symbol']
-                cache_price.push_ask(symbol, i['askPrice'])
-                cache_price.push_bid(symbol, i['bidPrice'])
-    except AcquireLockException:
-        logger.debug('Task update_binance_ask_bid_price is already running')
-    except Exception as e:
-        logger.exception(e)
-        raise e
-    logger.info(f'Updated binance ask/bid prices for {len(result["data"])} symbols')
-
-
-@app.task
-def update_ask_bid_price() -> None:
-    update_okx_ask_bid_price.delay()
-    update_binance_ask_bid_price.delay()
-
-
 class OkxExchange():
     def __init__(self, account: Account):
         self.account = account
@@ -187,7 +143,6 @@ class OkxExchange():
         return bills
 
     def get_new_executions_for_position(self, position: Position) -> Optional[List[Dict[str, Any]]]:
-        position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
         end_time = time.time() + settings.RECEIVE_TIMEOUT
         last_bill_id = position.executions.values_list('bill_id', flat=True).order_by('bill_id').last()
         if not last_bill_id:
@@ -262,7 +217,6 @@ class OkxExchange():
 
     def check_single_position(self, position: Position, open_positions: Dict[str, Any]) -> None:
         try:
-            position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
             if position.symbol.okx.inst_id in open_positions:
                 logger.debug('Position is still open in exchange', extra=position.strategy.extra_log)
             else:
@@ -300,6 +254,7 @@ def check_if_position_is_closed() -> None:
                     open_positions = exchange.get_open_positions()
                     threads = []
                     for position in open_positions_db:
+                        position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
                         # exchange.check_single_position(position, open_positions)
                         thread = threading.Thread(
                             target=exchange.check_single_position,
@@ -351,29 +306,6 @@ def update_bills():
                 except Exception as e:
                     logger.exception(e)
                     continue
-                # try:
-                #     bills_ids: set[int] = set(
-                #         Bill.objects
-                #         .filter(account=account)
-                #         .values_list('bill_id', flat=True)
-                #     )
-                #     exchange = OkxExchange(account)
-                #     last_bill_id: Optional[int] = max(bill_ids) if bill_ids else None
-                #     bills = exchange.get_bills(last_bill_id)
-                #     if not bills:
-                #         continue
-                #     new_bills: list[Bill] = [
-                #         Bill(bill_id=b['billId'], account=account, data=b)
-                #         for b in bills if b['billId'] not in bills_ids
-                #     ]
-                #     if new_bills:
-                #         bills = Bill.objects.bulk_create(new_bills, ignore_conflicts=True)
-                #         logger.info(f'Saved {len(new_bills)} new bills to db for account: {account.name}')
-                #     else:
-                #         logger.warning(f'All bills are already exist in db for account: {account.name}')
-                # except Exception as e:
-                #     logger.exception(e)
-                #     continue
     except AcquireLockException:
         logger.debug('Task update_bills is already running')
     except Exception as e:

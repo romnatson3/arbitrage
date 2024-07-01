@@ -1,4 +1,5 @@
 from math import floor
+import json
 from django_redis import get_redis_connection
 from django.core.cache import cache
 from .exceptions import AcquireLockException
@@ -65,64 +66,42 @@ class TaskLock():
         self.release()
 
 
-class CachePrice():
-    def __init__(self, exchange: str) -> None:
+class AskBidPrices():
+    def __init__(self, exchange: str, symbol: str) -> None:
         self.conection = get_redis_connection('default')
-        self.pipeline = self.conection.pipeline()
-        self.exchange = exchange
+        self.key = f'{exchange}_ask_bid_{symbol}'
+        self.data = self._get_last_two_records()
 
-    def push_ask(self, symbol: str, value: float) -> bool:
-        key = f'{self.exchange}_price_ask_{symbol}'
-        self.pipeline.execute_command('lpush', key, value)
-        self.pipeline.execute_command('ltrim', key, 0, 1)
-        result = self.pipeline.execute()
-        return all(result)
+    def _get_last_two_records(self) -> dict[str, float]:
+        records = self.conection.zrange(self.key, -2, -1)
+        if not records:
+            return dict(previous_ask=0, previous_bid=0, last_ask=0, last_bid=0)
+        if len(records) == 1:
+            last = json.loads(records[0])
+            return dict(previous_ask=0, previous_bid=0, last_ask=last['ask'], last_bid=last['bid'])
+        elif len(records) == 2:
+            previous, last = json.loads(records[0]), json.loads(records[1])
+            return dict(previous_ask=previous['ask'], previous_bid=previous['bid'],
+                        last_ask=last['ask'], last_bid=last['bid'])
 
-    def push_bid(self, symbol: str, value: float) -> bool:
-        key = f'{self.exchange}_price_bid_{symbol}'
-        self.pipeline.execute_command('lpush', key, value)
-        self.pipeline.execute_command('ltrim', key, 0, 1)
-        result = self.pipeline.execute()
-        return all(result)
+    def get_previous_ask_price(self):
+        return self.data['previous_ask']
 
-    def _get_ask(self, symbol: str) -> list[float]:
-        key = f'{self.exchange}_price_ask_{symbol}'
-        prices = self.conection.lrange(key, 0, -1)
-        prices = [float(i) for i in prices][::-1]
-        if len(prices) == 0:
-            return [0.0, 0.0]
-        elif len(prices) == 1:
-            return [0.0, prices[0]]
-        return prices
+    def get_previous_bid_price(self):
+        return self.data['previous_bid']
 
-    def _get_bid(self, symbol: str) -> list[float]:
-        key = f'{self.exchange}_price_bid_{symbol}'
-        prices = self.conection.lrange(key, 0, -1)
-        prices = [float(i) for i in prices][::-1]
-        if len(prices) == 0:
-            return [0.0, 0.0]
-        elif len(prices) == 1:
-            return [0.0, prices[0]]
-        return prices
+    def get_last_ask_price(self):
+        return self.data['last_ask']
 
-    def get_ask_previous_price(self, symbol):
-        return self._get_ask(symbol)[0]
-
-    def get_bid_previous_price(self, symbol):
-        return self._get_bid(symbol)[0]
-
-    def get_ask_last_price(self, symbol):
-        return self._get_ask(symbol)[1]
-
-    def get_bid_last_price(self, symbol):
-        return self._get_bid(symbol)[1]
+    def get_last_bid_price(self):
+        return self.data['last_bid']
 
 
-class CacheOkxOrderId():
+class SavedOkxOrderId():
     def __init__(self, account_id: int, inst_id: str) -> None:
+        self.key = f'okx_orders_{inst_id}_{account_id}'
         self.conection = get_redis_connection('default')
         self.pipeline = self.conection.pipeline()
-        self.key = f'orders_{inst_id}_{account_id}'
 
     def add(self, order_id: str) -> bool:
         self.pipeline.execute_command('lpush', self.key, order_id)
@@ -130,9 +109,5 @@ class CacheOkxOrderId():
         result = self.pipeline.execute()
         return all(result)
 
-    def remove(self, order_id: str) -> bool:
-        return self.conection.lrem(self.key, 0, order_id) == 1
-
-    def get_orders(self) -> list[str]:
-        l = self.conection.lrange(self.key, 0, -1)
-        return [i.decode() for i in l][::-1]
+    def get_orders(self) -> set[str]:
+        return {i.decode() for i in self.conection.lrange(self.key, 0, -1)}

@@ -2,7 +2,7 @@ import logging
 from django.utils import timezone
 from types import SimpleNamespace as Namespace
 from .models import Strategy, Symbol, Position
-from .helper import calc, CacheOkxOrderId
+from .helper import calc, SavedOkxOrderId
 from .trade import (
     OkxTrade, OkxEmulateTrade, get_ask_bid_prices_and_condition,
     get_take_profit_grid, get_stop_loss_breakeven
@@ -144,8 +144,8 @@ def watch_trade_position(strategy: Strategy, position: Position) -> None:
     if strategy.close_position_parts:
         if strategy.close_position_type == 'limit':
             if not sl_tp_data.first_part_closed:
-                cache_orders_ids = CacheOkxOrderId(strategy.second_account.id, position.symbol.okx.inst_id)
-                if sl_tp_data.tp_first_limit_order_id in cache_orders_ids.get_orders():
+                saved_orders_ids = SavedOkxOrderId(strategy.second_account.id, position.symbol.okx.inst_id)
+                if sl_tp_data.tp_first_limit_order_id in saved_orders_ids.get_orders():
                     logger.info(
                         f'First take profit limit order {sl_tp_data.tp_first_limit_order_id} is filled',
                         extra=strategy.extra_log

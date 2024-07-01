@@ -12,7 +12,7 @@ from .exceptions import (
     CancelOrderException, ClosePositionException, GetExecutionException
 )
 from .misc import convert_dict_values
-from .helper import calc, CachePrice
+from .helper import calc, AskBidPrices
 
 
 logger = logging.getLogger(__name__)
@@ -111,7 +111,6 @@ class OkxTrade():
 
     @staticmethod
     def save_execution(data: dict, position: Position) -> None:
-        position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
         execution, created = Execution.objects.get_or_create(
             bill_id=data['billId'], trade_id=data['tradeId'],
             defaults={'data': data, 'position': position}
@@ -548,26 +547,31 @@ def get_ask_bid_prices_and_condition(strategy: Strategy, symbol: Symbol) -> tupl
     spread_points = None
     condition_met = False
     min_delta_percent = None
-    first_exchange = CachePrice(strategy.first_account.exchange)
-    second_exchange = CachePrice(strategy.second_account.exchange)
-    first_exchange_previous_ask = first_exchange.get_ask_previous_price(symbol.symbol)
-    first_exchange_last_ask = first_exchange.get_ask_last_price(symbol.symbol)
-    first_exchange_previous_bid = first_exchange.get_bid_previous_price(symbol.symbol)
-    first_exchange_last_bid = first_exchange.get_bid_last_price(symbol.symbol)
+    first_exchange = AskBidPrices(strategy.first_account.exchange, symbol.symbol)
+    second_exchange = AskBidPrices(strategy.second_account.exchange, symbol.symbol)
+    first_exchange_previous_ask = first_exchange.get_previous_ask_price()
+    first_exchange_last_ask = first_exchange.get_last_ask_price()
+    first_exchange_previous_bid = first_exchange.get_previous_bid_price()
+    first_exchange_last_bid = first_exchange.get_last_bid_price()
     logger.debug(
         f'{first_exchange_previous_ask=}, {first_exchange_last_ask=}, '
         f'{first_exchange_previous_bid=}, {first_exchange_last_bid=}',
         extra=strategy.extra_log
     )
-    second_exchange_previous_ask = second_exchange.get_ask_previous_price(symbol.symbol)
-    second_exchange_last_ask = second_exchange.get_ask_last_price(symbol.symbol)
-    second_exchange_previous_bid = second_exchange.get_bid_previous_price(symbol.symbol)
-    second_exchange_last_bid = second_exchange.get_bid_last_price(symbol.symbol)
+    second_exchange_previous_ask = second_exchange.get_previous_ask_price()
+    second_exchange_last_ask = second_exchange.get_last_ask_price()
+    second_exchange_previous_bid = second_exchange.get_previous_bid_price()
+    second_exchange_last_bid = second_exchange.get_last_bid_price()
     logger.debug(
         f'{second_exchange_previous_ask=}, {second_exchange_last_ask=}, '
         f'{second_exchange_previous_bid=}, {second_exchange_last_bid=}',
         extra=strategy.extra_log
     )
+    if not all([
+        first_exchange_previous_ask, first_exchange_last_ask, first_exchange_previous_bid, first_exchange_last_bid,
+        second_exchange_previous_ask, second_exchange_last_ask, second_exchange_previous_bid, second_exchange_last_bid
+    ]):
+        raise ValueError('Not all prices are available')
     if second_exchange_previous_ask < first_exchange_previous_ask:
         logger.debug(
             'First condition for long position met '

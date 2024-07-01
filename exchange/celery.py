@@ -21,9 +21,6 @@ app.conf.update(
     task_routes={
         'binance_okx.tasks.clean_db_log': {'queue': 'default'},
         'binance_okx.tasks.update_symbols': {'queue': 'default'},
-        'binance_okx.tasks.update_ask_bid_price': {'queue': 'default'},
-        'binance_okx.tasks.update_binance_ask_bid_price': {'queue': 'default'},
-        'binance_okx.tasks.update_okx_ask_bid_price': {'queue': 'default'},
         'binance_okx.tasks.update_okx_market_price': {'queue': 'default'},
         'binance_okx.tasks.update_bills': {'queue': 'default'},
         'binance_okx.tasks.check_if_position_is_closed': {'queue': 'position'},
@@ -53,10 +50,6 @@ app.conf.update(
         },
         'okx_market_price': {
             'task': 'binance_okx.tasks.update_okx_market_price',
-            'schedule': 1,
-        },
-        'update_ask_bid_price': {
-            'task': 'binance_okx.tasks.update_ask_bid_price',
             'schedule': 1,
         },
         'update_symbols': {

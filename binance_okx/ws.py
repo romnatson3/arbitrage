@@ -96,12 +96,12 @@ class WebSocketOkxAskBid():
         while self.is_run:
             try:
                 if not self.ws.connected:
-                    logger.debug('Ping not sent. Socket is not connected')
+                    logger.debug(f'{self.__class__.__name__} ping not started. Socket is not connected')
                     continue
                 self.ws.send('ping')
-                logger.debug('Ping sent')
+                logger.debug(f'{self.__class__.__name__} ping sent')
             except Exception as e:
-                logger.error(f'Ping error: {e}')
+                logger.error(f'{self.__class__.__name__} ping error: {e}')
                 continue
             finally:
                 time.sleep(25)
@@ -110,7 +110,7 @@ class WebSocketOkxAskBid():
 
     def _message_handler(self, message: str) -> None | dict:
         if message == 'pong':
-            logger.debug('Pong received')
+            logger.debug(f'{self.__class__.__name__} pong received')
             return
         try:
             message = json.loads(message)
@@ -329,7 +329,7 @@ class WebSocketOkxOrders(WebSocketOkxAskBid):
 
     def _message_handler(self, message: str) -> None | dict:
         if message == 'pong':
-            logger.debug('Pong received')
+            logger.debug(f'{self.__class__.__name__} pong received')
             return
         try:
             message = json.loads(message)

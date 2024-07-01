@@ -334,7 +334,7 @@ class PositionAdmin(admin.ModelAdmin):
     def manual_fill_execution(self, request, queryset):
         tz = timezone.get_current_timezone()
         for position in queryset:
-            position.strategy._extra_log.update(symbol=position.symbol.symbol)
+            position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
             executions = Bill.objects.raw(
                 f'''SELECT bill_id, data
                     FROM binance_okx_bill
