@@ -38,14 +38,14 @@ def check_funding_time(strategy: Strategy, symbol: Symbol, position_side: str) -
 
 def fill_position_data(strategy: Strategy, position: Position, prices: dict, prices_entry: dict) -> Position:
     position.ask_bid_data.update(
-        first_exchange_previous_ask=prices['first_exchange_previous_ask'],
-        first_exchange_last_ask=prices['first_exchange_last_ask'],
-        first_exchange_previous_bid=prices['first_exchange_previous_bid'],
-        first_exchange_last_bid=prices['first_exchange_last_bid'],
-        second_exchange_previous_ask=prices['second_exchange_previous_ask'],
-        second_exchange_last_ask=prices['second_exchange_last_ask'],
-        second_exchange_previous_bid=prices['second_exchange_previous_bid'],
-        second_exchange_last_bid=prices['second_exchange_last_bid'],
+        binance_previous_ask=prices['binance_previous_ask'],
+        binance_last_ask=prices['binance_last_ask'],
+        binance_previous_bid=prices['binance_previous_bid'],
+        binance_last_bid=prices['binance_last_bid'],
+        okx_previous_ask=prices['okx_previous_ask'],
+        okx_last_ask=prices['okx_last_ask'],
+        okx_previous_bid=prices['okx_previous_bid'],
+        okx_last_bid=prices['okx_last_bid'],
         spread_points=prices['spread_points'],
         spread_percent=prices['spread_percent'],
         delta_points=prices['delta_points'],
@@ -72,10 +72,10 @@ def fill_position_data(strategy: Strategy, position: Position, prices: dict, pri
             prices['spread_percent'], position.side
         )
     position.ask_bid_data.update(
-        first_exchange_last_ask_entry=prices_entry['first_exchange_last_ask'],
-        first_exchange_last_bid_entry=prices_entry['first_exchange_last_bid'],
-        second_exchange_last_ask_entry=prices_entry['second_exchange_last_ask'],
-        second_exchange_last_bid_entry=prices_entry['second_exchange_last_bid'],
+        binance_last_ask_entry=prices_entry['binance_last_ask'],
+        binance_last_bid_entry=prices_entry['binance_last_bid'],
+        okx_last_ask_entry=prices_entry['okx_last_ask'],
+        okx_last_bid_entry=prices_entry['okx_last_bid'],
         spread_points_entry=prices_entry['spread_points'],
         spread_percent_entry=prices_entry['spread_percent'],
         delta_points_entry=prices_entry['delta_points'],
@@ -86,11 +86,11 @@ def fill_position_data(strategy: Strategy, position: Position, prices: dict, pri
     return position
 
 
-def time_close_position(strategy: Strategy, position_data) -> bool:
+def time_close_position(strategy: Strategy, position: Position) -> bool:
     if strategy.time_to_close:
         tz = timezone.get_current_timezone()
         open_time = timezone.datetime.strptime(
-            position_data.cTime, '%d-%m-%Y %H:%M:%S.%f').astimezone(tz)
+            position.position_data['cTime'], '%d-%m-%Y %H:%M:%S.%f').astimezone(tz)
         close_time = open_time + timezone.timedelta(seconds=strategy.time_to_close)
         seconds_to_close = (close_time - timezone.localtime()).total_seconds()
         logger.debug(
@@ -134,11 +134,10 @@ def open_trade_position(strategy: Strategy, symbol: Symbol, position_side: str, 
 
 def watch_trade_position(strategy: Strategy, position: Position) -> None:
     logger.debug('Position is open', extra=strategy.extra_log)
-    position_data = Namespace(**position.position_data)
     sl_tp_data = Namespace(**position.sl_tp_data)
     market_price = position.symbol.okx.market_price
     trade = OkxTrade(strategy, position.symbol, position.side)
-    if time_close_position(strategy, position_data):
+    if time_close_position(strategy, position):
         trade.close_entire_position()
         return
     if strategy.close_position_parts:

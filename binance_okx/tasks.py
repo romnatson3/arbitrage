@@ -24,7 +24,7 @@ from .strategy import (
     watch_emulate_position
 )
 from .ws import WebSocketOkxAskBid, WebSocketBinaceAskBid, WebSocketOkxOrders
-from .handlers import write_ask_bid_to_csv_by_symbol, save_ask_bid_to_cache, save_filled_limit_order_id
+from .handlers import write_ask_bid_to_csv_and_cache_by_symbol, save_ask_bid_to_cache, save_filled_limit_order_id
 
 
 logger = logging.getLogger(__name__)
@@ -333,8 +333,8 @@ def trade_strategy_for_symbol(strategy_id: int, symbol: str) -> None:
         symbol = Symbol.objects.get(symbol=symbol)
         with TaskLock(f'task_strategy_{strategy_id}_{symbol.symbol}'):
             position = strategy.positions.filter(symbol=symbol, is_open=True).last()
+            strategy._extra_log.update(symbol=symbol.symbol, position=position.id if position else None)
             if position:
-                strategy._extra_log.update(symbol=symbol.symbol, position=position.id)
                 watch_trade_position(strategy, position)
                 return
             condition_met, position_side, prices = get_ask_bid_prices_and_condition(strategy, symbol)
@@ -354,8 +354,8 @@ def emulate_strategy_for_symbol(strategy_id: int, symbol: str) -> None:
         symbol = Symbol.objects.get(symbol=symbol)
         with TaskLock(f'task_emulate_strategy_{strategy_id}_{symbol.symbol}'):
             position = strategy.positions.filter(symbol=symbol, is_open=True).last()
+            strategy._extra_log.update(symbol=symbol.symbol, position=position.id if position else None)
             if position:
-                strategy._extra_log.update(symbol=symbol.symbol, position=position.id)
                 watch_emulate_position(strategy, position)
                 return
             condition_met, position_side, prices = get_ask_bid_prices_and_condition(strategy, symbol)
@@ -443,8 +443,7 @@ def run_websocket_binance_ask_bid() -> None:
                 logger.debug('WebSocketBinaceAskBid all threads are running')
                 return
             ws_binance_ask_bid.start()
-            ws_binance_ask_bid.add_handler(save_ask_bid_to_cache)
-            ws_binance_ask_bid.add_handler(write_ask_bid_to_csv_by_symbol)
+            ws_binance_ask_bid.add_handler(write_ask_bid_to_csv_and_cache_by_symbol)
             time.sleep(3)
     except AcquireLockException:
         logger.debug('Task run_websocket_binance_ask_bid is already running')

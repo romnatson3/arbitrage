@@ -24,11 +24,11 @@ class StrategyForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        first_account = self.fields['first_account']
-        first_account.widget.can_view_related = False
-        first_account.widget.can_add_related = False
-        first_account.widget.can_change_related = False
-        first_account.widget.can_delete_related = False
+        # first_account = self.fields['first_account']
+        # first_account.widget.can_view_related = False
+        # first_account.widget.can_add_related = False
+        # first_account.widget.can_change_related = False
+        # first_account.widget.can_delete_related = False
         second_account = self.fields['second_account']
         second_account.widget.can_view_related = False
         second_account.widget.can_add_related = False
@@ -46,7 +46,7 @@ class StrategyForm(forms.ModelForm):
 
     def clean(self):
         cleaned_data: dict = super().clean()
-        first_account: Account = cleaned_data.get('first_account')
+        # first_account: Account = cleaned_data.get('first_account')
         second_account: Account = cleaned_data.get('second_account')
         position_size: float = cleaned_data.get('position_size')
         taker_fee: float = cleaned_data.get('taker_fee')
@@ -59,10 +59,13 @@ class StrategyForm(forms.ModelForm):
         tp_first_part_percent: float = cleaned_data.get('tp_first_part_percent')
         tp_second_price_percent: float = cleaned_data.get('tp_second_price_percent')
         tp_second_part_percent: float = cleaned_data.get('tp_second_part_percent')
-        if not first_account or not second_account:
-            raise forms.ValidationError('First account and second account are required')
-        if first_account.exchange == second_account.exchange:
-            raise forms.ValidationError('First account and second account must be different exchanges')
+        search_duration: int = cleaned_data.get('search_duration')
+        if not second_account:
+            raise forms.ValidationError('Account is required')
+        # if not first_account or not second_account:
+        #     raise forms.ValidationError('First account and second account are required')
+        # if first_account.exchange == second_account.exchange:
+        #     raise forms.ValidationError('First account and second account must be different exchanges')
         if position_size <= 0:
             self.add_error('position_size', 'Position size must be greater than 0')
         if taker_fee <= 0 and close_position_type == 'market':
@@ -77,5 +80,8 @@ class StrategyForm(forms.ModelForm):
                 self.add_error('tp_first_part_percent', 'Take profit part percent must be greater than 0')
                 self.add_error('tp_second_price_percent', 'Take profit price percent must be greater than 0')
                 self.add_error('tp_second_part_percent', 'Take profit part percent must be greater than 0')
-
+        if search_duration < 0:
+            self.add_error('search_duration', 'Search duration must be greater than 0')
+        if search_duration > 60000:
+            self.add_error('search_duration', 'Search duration must be less than 60000 ms')
         return cleaned_data

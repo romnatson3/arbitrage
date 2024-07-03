@@ -1,6 +1,8 @@
 import logging
 import websocket
-from websocket._exceptions import WebSocketConnectionClosedException, WebSocketException
+from websocket._exceptions import (
+    WebSocketConnectionClosedException, WebSocketException, WebSocketPayloadException
+)
 import json
 import ctypes
 import threading
@@ -137,11 +139,14 @@ class WebSocketOkxAskBid():
             self.previous_ask_bid[data['instId']] = [data['askPx'], data['bidPx']]
             return {k: v for k, v in data.items() if k in keys}
 
+    def init(self):
+        self._connect()
+        self._subscribed_inst_ids = []
+
     def run_forever(self) -> None:
         while self.is_run:
             try:
-                self._connect()
-                self._subscribed_inst_ids = []
+                self.init()
                 while self.is_run:
                     try:
                         message = self.ws.recv()
@@ -150,12 +155,14 @@ class WebSocketOkxAskBid():
                             logger.debug(data)
                             for handler in self._handlers:
                                 handler(data)
+                    except WebSocketPayloadException as e:
+                        logger.error(e)
                     except WebSocketException:
                         raise
                     except Exception as e:
                         logger.exception(e)
             except WebSocketConnectionClosedException:
-                logger.warning('Connection closed')
+                logger.warning(f'{self.__class__.__name__} connection closed')
             except WebSocketException as e:
                 logger.exception(e)
                 self.ws.close()
@@ -345,35 +352,13 @@ class WebSocketOkxOrders(WebSocketOkxAskBid):
             logger.info(f'Logged in to account: {self.account.name}')
             self._subscribe_orders()
         elif data:
-            return data[0]
+            data = data[0]
+            data['account_id'] = self.account.id
+            return data
 
-    def run_forever(self) -> None:
-        while self.is_run:
-            try:
-                self._connect()
-                self._login()
-                while self.is_run:
-                    try:
-                        message = self.ws.recv()
-                        data = self._message_handler(message)
-                        if data:
-                            logger.debug(data)
-                            for handler in self._handlers:
-                                handler(self.account.id, data)
-                    except WebSocketException:
-                        raise
-                    except Exception as e:
-                        logger.exception(e)
-            except WebSocketConnectionClosedException:
-                logger.warning('Connection closed')
-            except WebSocketException as e:
-                logger.exception(e)
-                self.ws.close()
-            finally:
-                time.sleep(3)
-        else:
-            self.ws.close()
-            logger.info(f'{self.__class__.__name__} is stopped')
+    def init(self):
+        self._connect()
+        self._login()
 
     def launch(self):
         run_forever_thread = threading.Thread(

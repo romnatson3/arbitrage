@@ -11,8 +11,8 @@ from django_redis import get_redis_connection
 logger = logging.getLogger(__name__)
 
 
-def save_filled_limit_order_id(account_id: int, data: dict) -> None:
-    saved_orders_ids = SavedOkxOrderId(account_id, data['instId'])
+def save_filled_limit_order_id(data: dict) -> None:
+    saved_orders_ids = SavedOkxOrderId(data['account_id'], data['instId'])
     if not data['ordType'] == 'limit':
         logger.info(f'Order {data["ordId"]} is not limit')
         return
@@ -25,30 +25,46 @@ def save_filled_limit_order_id(account_id: int, data: dict) -> None:
         logger.error(f'Failed to save order {data["ordId"]}')
 
 
-def write_ask_bid_to_csv_by_symbol(data: dict) -> None:
+def write_ask_bid_to_csv_and_cache_by_symbol(data: dict) -> None:
     symbol = data['s']
-    binance_ask = str(data['a']).replace('.', ',')
-    binance_bid = str(data['b']).replace('.', ',')
-    timestamp = datetime.fromtimestamp(int(data['E']) / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')
+    binance_ask = float(data['a'])
+    binance_bid = float(data['b'])
+    binance_ask_str = str(data['a']).replace('.', ',')
+    binance_bid_str = str(data['b']).replace('.', ',')
+    date_time = datetime.fromtimestamp(int(data['E']) / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
+    timestamp = int(data['E'])
     file_path = pathlib.Path('/opt/ask_bid') / f'{symbol}.csv'
     if not file_path.parent.exists():
         os.mkdir(file_path.parent)
     header = ['symbol', 'timestamp', 'binance_ask', 'binance_bid', 'okx_ask', 'okx_bid']
-    key = f'okx_ask_bid_{symbol}'
     connection = get_redis_connection('default')
-    okx_last_data = connection.zrange(key, -1, -1)
+    pipeline = connection.pipeline()
+    okx_last_data = connection.zrange(f'okx_ask_bid_{symbol}', -1, -1)
     if okx_last_data:
         okx_last_data = json.loads(okx_last_data[0])
-        okx_ask = str(okx_last_data['ask']).replace('.', ',')
-        okx_bid = str(okx_last_data['bid']).replace('.', ',')
+        okx_ask = okx_last_data['ask']
+        okx_bid = okx_last_data['bid']
+        okx_ask_str = str(okx_last_data['ask']).replace('.', ',')
+        okx_bid_str = str(okx_last_data['bid']).replace('.', ',')
     else:
         okx_ask = 0
         okx_bid = 0
+        okx_ask_str = 0
+        okx_bid_str = 0
+    data = json.dumps(dict(
+        symbol=symbol, binance_ask=binance_ask, binance_bid=binance_bid,
+        okx_ask=okx_ask, okx_bid=okx_bid, timestamp=timestamp, date_time=date_time
+    ))
+    key = f'binance_okx_ask_bid_{symbol}'
+    one_minute_ago = timestamp - 60000
+    pipeline.execute_command('zadd', key, timestamp, data)
+    pipeline.execute_command('zremrangebyscore', key, 0, one_minute_ago)
+    pipeline.execute()
     with open(file_path, 'a', newline='') as file:
         writer = csv.writer(file, delimiter=';')
         if file.tell() == 0:
             writer.writerow(header)
-        writer.writerow([symbol, timestamp, binance_ask, binance_bid, okx_ask, okx_bid])
+        writer.writerow([symbol, date_time, binance_ask_str, binance_bid_str, okx_ask_str, okx_bid_str])
 
 
 def save_ask_bid_to_cache(data: dict) -> None:
@@ -66,11 +82,12 @@ def save_ask_bid_to_cache(data: dict) -> None:
         ask = float(data['a'])
         bid = float(data['b'])
         timestamp = int(data['E'])
-    key = f'{exchange}_ask_bid_{symbol}'
-    data = json.dumps(dict(symbol=symbol, ask=ask, bid=bid, timestamp=timestamp))
     # current_time = int(datetime.now().timestamp() * 1000)
     current_time = int(timestamp)
-    one_minute_ago = current_time - 60000
+    date_time = datetime.fromtimestamp(timestamp / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
+    key = f'{exchange}_ask_bid_{symbol}'
+    data = json.dumps(dict(symbol=symbol, ask=ask, bid=bid, timestamp=timestamp, date_time=date_time))
+    one_minute_ago = current_time - 10000
     pipeline.execute_command('zadd', key, current_time, data)
     pipeline.execute_command('zremrangebyscore', key, 0, one_minute_ago)
     pipeline.execute()

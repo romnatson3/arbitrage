@@ -63,8 +63,8 @@ class StatusLogAdmin(admin.ModelAdmin):
     )
     list_display_links = ('colored_msg',)
     list_filter = ('level', 'symbol', 'position')
-    list_per_page = 50
-    search_fields = ('msg', 'trace')
+    list_per_page = 500
+    search_fields = ('msg', 'trace', 'position', 'symbol')
     fields = (
         'level', 'colored_msg', 'traceback', 'create_datetime_format', 'created_by',
         'strategy', 'symbol', 'position'
@@ -203,8 +203,11 @@ class StrategyAdmin(admin.ModelAdmin):
     search_fields = ('name',)
     list_filter = ()
     fieldsets = (
-        (None, {'fields': ('id', 'name', 'enabled', 'mode', 'search_duration', 'simultaneous_opening_positions')}),
-        (None, {'fields': (('first_account', 'second_account'),)}),
+        (None, {'fields': (
+            'id', 'name', 'enabled', 'mode', 'search_duration',
+            'simultaneous_opening_positions', 'second_account'
+        )}),
+        # (None, {'fields': (('first_account', 'second_account'),)}),
         (None, {'fields': ('symbols',)}),
         (
             None,
@@ -229,7 +232,7 @@ class StrategyAdmin(admin.ModelAdmin):
     )
     list_display_links = ('id', 'name')
     readonly_fields = ('id', 'updated_at', 'created_at')
-    autocomplete_fields = ('first_account', 'second_account', 'symbols')
+    autocomplete_fields = ('second_account', 'symbols')
     save_on_top = True
     form = StrategyForm
 
@@ -309,7 +312,7 @@ class PositionAdmin(admin.ModelAdmin):
 
     @admin.display(description='Contract size')
     def _contract(self, obj) -> str:
-        return obj.position_data.get('pos', '')
+        return round(float(obj.position_data.get('pos', 0)), 1)
 
     @admin.display(description='USDT amount')
     def _amount(self, obj) -> str:
@@ -405,23 +408,23 @@ class PositionAdmin(admin.ModelAdmin):
                     execution.position.mode,
                     position_data.posSide,
                     data.subType,
-                    ask_bid_data.first_exchange_previous_ask,
-                    ask_bid_data.first_exchange_last_ask,
-                    ask_bid_data.first_exchange_previous_bid,
-                    ask_bid_data.first_exchange_last_bid,
-                    ask_bid_data.second_exchange_previous_ask,
-                    ask_bid_data.second_exchange_last_ask,
-                    ask_bid_data.second_exchange_previous_bid,
-                    ask_bid_data.second_exchange_last_bid,
+                    ask_bid_data.binance_previous_ask,
+                    ask_bid_data.binance_last_ask,
+                    ask_bid_data.binance_previous_bid,
+                    ask_bid_data.binance_last_bid,
+                    ask_bid_data.okx_previous_ask,
+                    ask_bid_data.okx_last_ask,
+                    ask_bid_data.okx_previous_bid,
+                    ask_bid_data.okx_last_bid,
                     ask_bid_data.delta_points,
                     ask_bid_data.delta_percent,
                     ask_bid_data.target_delta,
                     ask_bid_data.spread_points,
                     ask_bid_data.spread_percent,
-                    ask_bid_data.first_exchange_last_ask_entry,
-                    ask_bid_data.first_exchange_last_bid_entry,
-                    ask_bid_data.second_exchange_last_ask_entry,
-                    ask_bid_data.second_exchange_last_bid_entry,
+                    ask_bid_data.binance_last_ask_entry,
+                    ask_bid_data.binance_last_bid_entry,
+                    ask_bid_data.okx_last_ask_entry,
+                    ask_bid_data.okx_last_bid_entry,
                     ask_bid_data.delta_points_entry,
                     ask_bid_data.delta_percent_entry,
                     ask_bid_data.spread_points_entry,
@@ -490,7 +493,7 @@ class PositionAdmin(admin.ModelAdmin):
 @admin.register(Execution)
 class ExecutionAdmin(admin.ModelAdmin):
     list_display = (
-        'id', 'position', '_type', '_contract', '_amount', '_px', 'bill_id', 'trade_id',
+        'id', 'position', '_type', '_contract', '_amount', '_px', '_pnl', 'bill_id', 'trade_id',
         'updated_at'
     )
     fields = (
@@ -542,6 +545,10 @@ class ExecutionAdmin(admin.ModelAdmin):
     @admin.display(description='Px')
     def _px(self, obj) -> str:
         return obj.data.get('px', '')
+
+    @admin.display(description='PnL')
+    def _pnl(self, obj) -> str:
+        return obj.data.get('pnl', '')
 
 
 @admin.register(Bill)

@@ -73,11 +73,11 @@ class Account(BaseModel):
         verbose_name_plural = 'Accounts'
 
     class Exchange(models.TextChoices):
-        binance = 'binance', 'Binance'
+        # binance = 'binance', 'Binance'
         okx = 'okx', 'OKX'
 
     name = models.CharField('name', max_length=255, blank=False, null=False, unique=True, help_text='Account name')
-    exchange = models.CharField('exchange', choices=Exchange.choices, help_text='Exchange', default=Exchange.binance)
+    exchange = models.CharField('exchange', choices=Exchange.choices, help_text='Exchange', default=Exchange.okx)
     api_key = models.CharField('api_key', max_length=255, blank=False, null=False, help_text='API key')
     api_secret = models.CharField('api_secret', max_length=255, blank=False, null=False, help_text='API secret')
     api_passphrase = models.CharField('api_passphrase', max_length=255, blank=True, null=True, help_text='API passphrase')
@@ -210,8 +210,8 @@ class Strategy(BaseModel):
     name = models.CharField('name', max_length=255, blank=False, null=False, help_text='Strategy name')
     enabled = models.BooleanField('Enabled', default=True, help_text='Is enabled')
     task = models.ForeignKey('django_celery_beat.PeriodicTask', models.RESTRICT, verbose_name='Task', null=True)
-    first_account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='strategies_set', help_text='Binance account')
-    second_account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='strategies', help_text='OKX account')
+    first_account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='strategies_set', help_text='Binance account', null=True)
+    second_account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='strategies', help_text='OKX account', verbose_name='OKX account')
     symbols = models.ManyToManyField(Symbol, related_name='strategies', help_text='Symbols')
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='strategies', help_text='Created by')
     position_size = models.FloatField('Position size', default=0.0, help_text='Max position size, USDT')
@@ -230,7 +230,7 @@ class Strategy(BaseModel):
     time_to_funding = models.IntegerField('Time to funding', default=0, help_text='Time to funding, minutes')
     only_profit = models.BooleanField('Only profit', default=False, help_text='Trading only in the direction of funding')
     mode = models.CharField('Mode', choices=Mode.choices, default=Mode.trade, help_text='Algorithm mode')
-    search_duration = models.IntegerField('Search duration', default=0, help_text='Search duration, seconds')
+    search_duration = models.IntegerField('Search duration', default=0, help_text='Search duration, milliseconds')
     simultaneous_opening_positions = models.BooleanField('Simultaneous opening of positions', default=False)
 
     def _create_task(self) -> PeriodicTask:
@@ -501,23 +501,23 @@ class Position(BaseModel):
     @staticmethod
     def get_ask_bid_empty_data() -> dict:
         data = {
-            'first_exchange_previous_ask': None,
-            'first_exchange_last_ask': None,
-            'first_exchange_previous_bid': None,
-            'first_exchange_last_bid': None,
-            'second_exchange_previous_ask': None,
-            'second_exchange_last_ask': None,
-            'second_exchange_previous_bid': None,
-            'second_exchange_last_bid': None,
+            'binance_previous_ask': None,
+            'binance_last_ask': None,
+            'binance_previous_bid': None,
+            'binance_last_bid': None,
+            'okx_previous_ask': None,
+            'okx_last_ask': None,
+            'okx_previous_bid': None,
+            'okx_last_bid': None,
             'delta_points': None,
             'delta_percent': None,
             'target_delta': None,
             'spread_points': None,
             'spread_percent': None,
-            'first_exchange_last_ask_entry': None,
-            'first_exchange_last_bid_entry': None,
-            'second_exchange_last_ask_entry': None,
-            'second_exchange_last_bid_entry': None,
+            'binance_last_ask_entry': None,
+            'binance_last_bid_entry': None,
+            'okx_last_ask_entry': None,
+            'okx_last_bid_entry': None,
             'delta_points_entry': None,
             'delta_percent_entry': None,
             'spread_points_entry': None,

@@ -1,9 +1,14 @@
+import logging
 from math import floor
 import json
+from datetime import datetime
 from django_redis import get_redis_connection
 from django.core.cache import cache
 from .exceptions import AcquireLockException
-from .models import OkxSymbol
+from .models import OkxSymbol, Strategy
+
+
+logger = logging.getLogger(__name__)
 
 
 class Calculator():
@@ -66,35 +71,57 @@ class TaskLock():
         self.release()
 
 
-class AskBidPrices():
-    def __init__(self, exchange: str, symbol: str) -> None:
-        self.conection = get_redis_connection('default')
-        self.key = f'{exchange}_ask_bid_{symbol}'
-        self.data = self._get_last_two_records()
-
-    def _get_last_two_records(self) -> dict[str, float]:
-        records = self.conection.zrange(self.key, -2, -1)
-        if not records:
-            return dict(previous_ask=0, previous_bid=0, last_ask=0, last_bid=0)
-        if len(records) == 1:
-            last = json.loads(records[0])
-            return dict(previous_ask=0, previous_bid=0, last_ask=last['ask'], last_bid=last['bid'])
-        elif len(records) == 2:
-            previous, last = json.loads(records[0]), json.loads(records[1])
-            return dict(previous_ask=previous['ask'], previous_bid=previous['bid'],
-                        last_ask=last['ask'], last_bid=last['bid'])
-
-    def get_previous_ask_price(self):
-        return self.data['previous_ask']
-
-    def get_previous_bid_price(self):
-        return self.data['previous_bid']
-
-    def get_last_ask_price(self):
-        return self.data['last_ask']
-
-    def get_last_bid_price(self):
-        return self.data['last_bid']
+def get_ask_bid_prices_from_cache_by_symbol(strategy: Strategy, symbol: str) -> dict[str, float]:
+    prices = dict(
+        binance_previous_ask=0, binance_previous_bid=0,
+        binance_last_ask=0, binance_last_bid=0,
+        okx_previous_ask=0, okx_previous_bid=0,
+        okx_last_ask=0, okx_last_bid=0, position_side=None
+    )
+    conection = get_redis_connection('default')
+    records = conection.zrange(f'binance_okx_ask_bid_{symbol}', 0, -1, 'REV')
+    records = [json.loads(i) for i in records]
+    if not records:
+        logger.warning('No records found in cache', extra=strategy.extra_log)
+        return prices
+    data = records.pop(0)
+    prices.update(
+        binance_last_ask=data['binance_ask'],
+        binance_last_bid=data['binance_bid'],
+        okx_last_ask=data['okx_ask'],
+        okx_last_bid=data['okx_bid']
+    )
+    if not records:
+        logger.warning('Only one record found in cache', extra=strategy.extra_log)
+        return prices
+    edge_timestamp = data['timestamp'] - strategy.search_duration
+    records = [i for i in records if i['timestamp'] >= edge_timestamp]
+    if not records:
+        logger.debug(
+            f'No records found in cache for the last {strategy.search_duration} ms',
+            extra=strategy.extra_log
+        )
+        return prices
+    for item in records:
+        if prices['binance_last_bid'] > item['binance_bid']:
+            prices['position_side'] = 'long'
+            break
+        elif prices['binance_last_ask'] < item['binance_ask']:
+            prices['position_side'] = 'short'
+            break
+    else:
+        logger.debug(
+            f'First condition not met for last {strategy.search_duration} ms',
+            extra=strategy.extra_log
+        )
+        return prices
+    prices.update(
+        binance_previous_ask=item['binance_ask'],
+        binance_previous_bid=item['binance_bid'],
+        okx_previous_ask=item['okx_ask'],
+        okx_previous_bid=item['okx_bid']
+    )
+    return prices
 
 
 class SavedOkxOrderId():

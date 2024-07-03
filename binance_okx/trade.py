@@ -2,6 +2,7 @@ import logging
 import time
 import uuid
 from typing import Any
+from types import SimpleNamespace as Namespace
 from django.utils import timezone
 from django.conf import settings
 import okx.Trade as Trade
@@ -12,7 +13,7 @@ from .exceptions import (
     CancelOrderException, ClosePositionException, GetExecutionException
 )
 from .misc import convert_dict_values
-from .helper import calc, AskBidPrices
+from .helper import calc, get_ask_bid_prices_from_cache_by_symbol
 
 
 logger = logging.getLogger(__name__)
@@ -541,78 +542,74 @@ def get_stop_loss_breakeven(entry_price: float, fee_percent: float, spread_perce
 
 
 def get_ask_bid_prices_and_condition(strategy: Strategy, symbol: Symbol) -> tuple[bool, str, dict]:
-    position_side = None
     delta_percent = None
     delta_points = None
     spread_points = None
     condition_met = False
     min_delta_percent = None
-    first_exchange = AskBidPrices(strategy.first_account.exchange, symbol.symbol)
-    second_exchange = AskBidPrices(strategy.second_account.exchange, symbol.symbol)
-    first_exchange_previous_ask = first_exchange.get_previous_ask_price()
-    first_exchange_last_ask = first_exchange.get_last_ask_price()
-    first_exchange_previous_bid = first_exchange.get_previous_bid_price()
-    first_exchange_last_bid = first_exchange.get_last_bid_price()
+    prices = get_ask_bid_prices_from_cache_by_symbol(strategy, symbol.symbol)
+    binance_previous_ask = prices['binance_previous_ask']
+    binance_last_ask = prices['binance_last_ask']
+    binance_previous_bid = prices['binance_previous_bid']
+    binance_last_bid = prices['binance_last_bid']
+    okx_previous_ask = prices['okx_previous_ask']
+    okx_last_ask = prices['okx_last_ask']
+    okx_previous_bid = prices['okx_previous_bid']
+    okx_last_bid = prices['okx_last_bid']
+    position_side = prices['position_side']
     logger.debug(
-        f'{first_exchange_previous_ask=}, {first_exchange_last_ask=}, '
-        f'{first_exchange_previous_bid=}, {first_exchange_last_bid=}',
-        extra=strategy.extra_log
-    )
-    second_exchange_previous_ask = second_exchange.get_previous_ask_price()
-    second_exchange_last_ask = second_exchange.get_last_ask_price()
-    second_exchange_previous_bid = second_exchange.get_previous_bid_price()
-    second_exchange_last_bid = second_exchange.get_last_bid_price()
-    logger.debug(
-        f'{second_exchange_previous_ask=}, {second_exchange_last_ask=}, '
-        f'{second_exchange_previous_bid=}, {second_exchange_last_bid=}',
+        f'{binance_previous_ask=}, {binance_last_ask=}, '
+        f'{binance_previous_bid=}, {binance_last_bid=} '
+        f'{okx_previous_ask=}, {okx_last_ask=}, '
+        f'{okx_previous_bid=}, {okx_last_bid=}',
         extra=strategy.extra_log
     )
     if not all([
-        first_exchange_previous_ask, first_exchange_last_ask, first_exchange_previous_bid, first_exchange_last_bid,
-        second_exchange_previous_ask, second_exchange_last_ask, second_exchange_previous_bid, second_exchange_last_bid
+        binance_previous_ask, binance_last_ask, binance_previous_bid, binance_last_bid,
+        okx_previous_ask, okx_last_ask, okx_previous_bid, okx_last_bid
     ]):
-        raise ValueError('Not all prices are available')
-    if second_exchange_previous_ask < first_exchange_previous_ask:
+        logger.debug('Not all prices are available', extra=strategy.extra_log)
+        return condition_met, position_side, dict()
+    if position_side == 'long':
         logger.debug(
-            'First condition for long position met '
-            f'{first_exchange_previous_ask=} < {second_exchange_previous_ask=}',
+            f'First condition for long position met {binance_last_bid=} > {binance_previous_bid=}',
             extra=strategy.extra_log
         )
-        first_exchange_delta_percent = (
-            (first_exchange_last_bid - first_exchange_previous_bid) / first_exchange_previous_bid * 100
+        binance_delta_percent = (
+            (binance_last_bid - binance_previous_bid) / binance_previous_bid * 100
         )
-        second_exchange_delta_percent = (
-            (second_exchange_last_ask - second_exchange_previous_ask) / second_exchange_previous_ask * 100
+        okx_delta_percent = (
+            (okx_last_ask - okx_previous_ask) / okx_previous_ask * 100
         )
-        position_side = 'long'
-        delta_points = (first_exchange_last_bid - second_exchange_last_ask) / symbol.okx.tick_size
-    elif second_exchange_previous_bid > first_exchange_previous_bid:
+        delta_points = (binance_last_bid - okx_last_ask) / symbol.okx.tick_size
+    elif position_side == 'short':
         logger.debug(
-            'First condition for short position met '
-            f'{first_exchange_previous_bid=} > {second_exchange_previous_bid=}',
+            f'First condition for short position met {binance_last_ask=} < {binance_previous_ask=}',
             extra=strategy.extra_log
         )
-        first_exchange_delta_percent = (
-            (first_exchange_previous_ask - first_exchange_last_ask) / first_exchange_previous_ask * 100
+        binance_delta_percent = (
+            (binance_previous_ask - binance_last_ask) / binance_previous_ask * 100
         )
-        second_exchange_delta_percent = (
-            (second_exchange_previous_bid - second_exchange_last_bid) / second_exchange_previous_bid * 100
+        okx_delta_percent = (
+            (okx_previous_bid - okx_last_bid) / okx_previous_bid * 100
         )
-        position_side = 'short'
-        delta_points = (second_exchange_last_bid - first_exchange_last_ask) / symbol.okx.tick_size
+        delta_points = (okx_last_bid - binance_last_ask) / symbol.okx.tick_size
     spread_percent = (
-        (second_exchange_last_ask - second_exchange_last_bid) / second_exchange_last_bid * 100
+        (okx_last_ask - okx_last_bid) / okx_last_bid * 100
     )
-    spread_points = (second_exchange_last_ask - second_exchange_last_bid) / symbol.okx.tick_size
+    spread_points = (okx_last_ask - okx_last_bid) / symbol.okx.tick_size
     if position_side:
-        logger.debug(f'{spread_percent=:.10f}, {spread_points=:.2f}, {delta_points=:.2f}', extra=strategy.extra_log)
         logger.debug(
-            f'{first_exchange_delta_percent=:.10f}, {second_exchange_delta_percent=:.10f}, {position_side=}',
+            f'{spread_percent=:.10f}, {spread_points=:.2f}, {delta_points=:.2f}',
+            extra=strategy.extra_log
+        )
+        logger.debug(
+            f'{binance_delta_percent=:.10f}, {okx_delta_percent=:.10f}, {position_side=}',
             extra=strategy.extra_log
         )
         target_profit = strategy.tp_first_price_percent if strategy.close_position_parts else strategy.target_profit
         min_delta_percent = strategy.open_plus_close_fee + spread_percent + target_profit
-        delta_percent = first_exchange_delta_percent - second_exchange_delta_percent
+        delta_percent = binance_delta_percent - okx_delta_percent
         if delta_percent >= min_delta_percent:
             condition_met = True
             logger.info(
@@ -627,14 +624,14 @@ def get_ask_bid_prices_and_condition(strategy: Strategy, symbol: Symbol) -> tupl
                 extra=strategy.extra_log
             )
     prices = dict(
-        first_exchange_previous_ask=first_exchange_previous_ask,
-        first_exchange_last_ask=first_exchange_last_ask,
-        first_exchange_previous_bid=first_exchange_previous_bid,
-        first_exchange_last_bid=first_exchange_last_bid,
-        second_exchange_previous_ask=second_exchange_previous_ask,
-        second_exchange_last_ask=second_exchange_last_ask,
-        second_exchange_previous_bid=second_exchange_previous_bid,
-        second_exchange_last_bid=second_exchange_last_bid,
+        binance_previous_ask=binance_previous_ask,
+        binance_last_ask=binance_last_ask,
+        binance_previous_bid=binance_previous_bid,
+        binance_last_bid=binance_last_bid,
+        okx_previous_ask=okx_previous_ask,
+        okx_last_ask=okx_last_ask,
+        okx_previous_bid=okx_previous_bid,
+        okx_last_bid=okx_last_bid,
         spread_points=spread_points,
         spread_percent=spread_percent,
         delta_points=delta_points,
