@@ -82,7 +82,7 @@ def get_ask_bid_prices_from_cache_by_symbol(strategy: Strategy, symbol: str) -> 
     records = conection.zrange(f'binance_okx_ask_bid_{symbol}', 0, -1, 'REV')
     records = [json.loads(i) for i in records]
     if not records:
-        logger.warning('No records found in cache', extra=strategy.extra_log)
+        logger.debug('No records found in cache', extra=strategy.extra_log)
         return prices
     data = records.pop(0)
     prices.update(
@@ -92,7 +92,7 @@ def get_ask_bid_prices_from_cache_by_symbol(strategy: Strategy, symbol: str) -> 
         okx_last_bid=data['okx_bid']
     )
     if not records:
-        logger.warning('Only one record found in cache', extra=strategy.extra_log)
+        logger.debug('Only one record found in cache', extra=strategy.extra_log)
         return prices
     edge_timestamp = data['timestamp'] - strategy.search_duration
     records = [i for i in records if i['timestamp'] >= edge_timestamp]
