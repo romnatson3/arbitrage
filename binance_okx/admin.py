@@ -349,19 +349,19 @@ class PositionAdmin(admin.ModelAdmin):
                 ''')
             logger.debug(executions.query.sql, extra=position.strategy._extra_log)
             logger.info(
-                f'Found {len(executions)} exceptions for position {position.id}',
+                f'Found {len(executions)} execution for position {position.id}',
                 extra=position.strategy._extra_log
             )
             if executions:
                 self.message_user(
                     request,
-                    f'Found {len(executions)} exceptions for position {position.id}',
+                    f'Found {len(executions)} executions for position {position.id}',
                     level='WARNING'
                 )
                 for execution in executions:
                     OkxTrade.save_execution(execution.data, position)
             else:
-                self.message_user(request, f'No exceptions found for position {position.id}', level='ERROR')
+                self.message_user(request, f'No executions found for position {position.id}', level='ERROR')
 
     @admin.action(description='Export CSV')
     def export_csv_action(self, request, queryset):

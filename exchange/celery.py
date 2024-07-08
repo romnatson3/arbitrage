@@ -46,7 +46,7 @@ app.conf.update(
         },
         'check_if_position_is_closed': {
             'task': 'binance_okx.tasks.check_if_position_is_closed',
-            'schedule': 5,
+            'schedule': 1,
         },
         'okx_market_price': {
             'task': 'binance_okx.tasks.update_okx_market_price',
@@ -58,12 +58,12 @@ app.conf.update(
         },
         'update_bills': {
             'task': 'binance_okx.tasks.update_bills',
-            'schedule': 5,
+            'schedule': 1,
         },
         'clean_db_log': {
             'task': 'binance_okx.tasks.clean_db_log',
-            'schedule': crontab(minute=0, hour=0),
-            'args': (5,)
+            'schedule': crontab(minute=0, hour='*'),
+            'args': (3,)
         },
     }
 )

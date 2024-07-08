@@ -236,7 +236,7 @@ class Strategy(BaseModel):
     def _create_task(self) -> PeriodicTask:
         task_name = f'strategy_{self.id}'
         task = 'binance_okx.tasks.run_strategy'
-        interval, _ = IntervalSchedule.objects.get_or_create(every=5, period='seconds')
+        interval, _ = IntervalSchedule.objects.get_or_create(every=1, period='seconds')
         periodic_task, exists = PeriodicTask.objects.get_or_create(
             name=task_name,
             task=task,

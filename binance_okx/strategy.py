@@ -1,4 +1,5 @@
 import logging
+from django.core.cache import cache
 from django.utils import timezone
 from types import SimpleNamespace as Namespace
 from .models import Strategy, Symbol, Position
@@ -99,6 +100,7 @@ def time_close_position(strategy: Strategy, position: Position) -> bool:
         )
         if seconds_to_close <= 0:
             logger.warning(f'Close time {close_time} reached', extra=strategy.extra_log)
+            cache.set(f'strategy_{strategy.id}_position_{position.id}_close_time_reached', True, timeout=15)
             return True
     return False
 
@@ -133,10 +135,13 @@ def open_trade_position(strategy: Strategy, symbol: Symbol, position_side: str, 
 
 
 def watch_trade_position(strategy: Strategy, position: Position) -> None:
-    logger.debug('Position is open', extra=strategy.extra_log)
+    logger.debug('Watching position state', extra=strategy.extra_log)
     sl_tp_data = Namespace(**position.sl_tp_data)
     market_price = position.symbol.okx.market_price
     trade = OkxTrade(strategy, position.symbol, position.side)
+    if cache.get(f'strategy_{strategy.id}_position_{position.id}_close_time_reached'):
+        logger.warning('Close time reached, position closing now', extra=strategy.extra_log)
+        return
     if time_close_position(strategy, position):
         trade.close_entire_position()
         return

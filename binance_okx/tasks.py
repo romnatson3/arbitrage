@@ -1,6 +1,7 @@
 import logging
 import threading
 import time
+import re
 from typing import Any, Dict, List, Optional
 from django.utils import timezone
 from django.contrib.auth import get_user_model
@@ -77,7 +78,13 @@ def update_symbols() -> None:
     binance_symbols = list(BinanceSymbol.objects.order_by('symbol'))
     for i in okx_symbols:
         for j in binance_symbols:
+            okx_symbol = re.sub(r'\d', '', i.symbol)
+            binance_symbol = re.sub(r'\d', '', j.symbol)
             if i.symbol == j.symbol:
+                Symbol.objects.get_or_create(symbol=i.symbol, okx=i, binance=j)
+                break
+            elif okx_symbol == binance_symbol:
+                logger.warning(f'Found similar symbols, okx: {i.symbol}, binance: {j.symbol}')
                 Symbol.objects.get_or_create(symbol=i.symbol, okx=i, binance=j)
                 break
 
