@@ -1,7 +1,6 @@
 import logging
 from math import floor
 import json
-from datetime import datetime
 from django_redis import get_redis_connection
 from django.core.cache import cache
 from .exceptions import AcquireLockException
@@ -76,7 +75,7 @@ def get_ask_bid_prices_from_cache_by_symbol(strategy: Strategy, symbol: str) -> 
         binance_previous_ask=0, binance_previous_bid=0,
         binance_last_ask=0, binance_last_bid=0,
         okx_previous_ask=0, okx_previous_bid=0,
-        okx_last_ask=0, okx_last_bid=0, position_side=None
+        okx_last_ask=0, okx_last_bid=0, position_side=None, date_time_last_prices=None
     )
     conection = get_redis_connection('default')
     records = conection.zrange(f'binance_okx_ask_bid_{symbol}', 0, -1, 'REV')
@@ -89,7 +88,8 @@ def get_ask_bid_prices_from_cache_by_symbol(strategy: Strategy, symbol: str) -> 
         binance_last_ask=data['binance_ask'],
         binance_last_bid=data['binance_bid'],
         okx_last_ask=data['okx_ask'],
-        okx_last_bid=data['okx_bid']
+        okx_last_bid=data['okx_bid'],
+        date_time_last_prices=data['date_time']
     )
     if not records:
         logger.debug('Only one record found in cache', extra=strategy.extra_log)

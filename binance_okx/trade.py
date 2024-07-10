@@ -2,7 +2,6 @@ import logging
 import time
 import uuid
 from typing import Any
-from types import SimpleNamespace as Namespace
 from django.utils import timezone
 from django.conf import settings
 import okx.Trade as Trade
@@ -43,9 +42,22 @@ class OkxTrade():
             symbol = self.symbol_okx
         if not position_size:
             position_size = self.strategy.position_size
-        sz = calc.get_sz(position_size, symbol)
         if not position_side:
             position_side = self.position_side
+        order_id = self.place_order(position_size, symbol, position_side)
+        logger.warning(
+            f'Opened {position_side} position, {position_size=}, {order_id=}',
+            extra=self.strategy.extra_log
+        )
+        position: dict = self.get_position()
+        position: Position = self.save_position(position)
+        executions: list[dict] = self.get_executions_by_order_id(order_id)
+        for execution in executions:
+            OkxTrade.save_execution(execution, position)
+        return position
+
+    def place_order(self, position_size: float, symbol: OkxSymbol, position_side: str) -> str:
+        sz = calc.get_sz(position_size, symbol)
         if position_side == 'long':
             side = 'buy'
         if position_side == 'short':
@@ -61,16 +73,18 @@ class OkxTrade():
         if result['code'] != '0':
             raise PlaceOrderException(result)
         order_id = result['data'][0]['ordId']
+        logger.info(f'Placed order {sz=} {order_id=}', extra=self.strategy.extra_log)
+        return order_id
+
+    def increase_position(self):
+        symbol = self.symbol_okx
+        position_size = self.strategy.position_size
+        position_side = self.position_side
+        order_id = self.place_order(position_size, symbol, position_side)
         logger.warning(
-            f'Opened {position_side} position, {position_size=}, {sz=}, {order_id=}',
+            f'Increased {position_side} position, {position_size=}, {order_id=}',
             extra=self.strategy.extra_log
         )
-        position: dict = self.get_position()
-        position: Position = self.save_position(position)
-        executions: list[dict] = self.get_executions_by_order_id(order_id)
-        for execution in executions:
-            OkxTrade.save_execution(execution, position)
-        return position
 
     def save_position(self, data: dict) -> Position:
         position = Position.objects.filter(
@@ -155,6 +169,11 @@ class OkxTrade():
         )
 
     def close_entire_position(self, symbol: OkxSymbol = None, position_side: str = None) -> None:
+        try:
+            self.get_position(symbol=symbol, wait=0)
+        except GetPositionException:
+            logger.warning('No position to close', extra=self.strategy.extra_log)
+            return
         if not symbol:
             symbol = self.symbol_okx
         if not position_side:
@@ -172,10 +191,12 @@ class OkxTrade():
         else:
             logger.warning(f'Closed {position_side} position', extra=self.strategy.extra_log)
 
-    def get_position(self, symbol: OkxSymbol = None) -> dict:
+    def get_position(self, symbol: OkxSymbol = None, wait: int = 10) -> dict:
         if not symbol:
             symbol = self.symbol_okx
-        end_time = time.time() + 10
+        if wait <= 0:
+            wait = 1
+        end_time = time.time() + wait
         while time.time() < end_time:
             logger.debug('Trying to get position data', extra=self.strategy.extra_log)
             result = self.account.get_positions(instId=symbol.inst_id, instType='SWAP')
@@ -193,9 +214,15 @@ class OkxTrade():
                 )
                 return data
             time.sleep(1)
-        raise GetPositionException('Failed to get position data. Timeout')
+        raise GetPositionException(f'Failed to get position data. Timeout {wait}s reached')
 
-    def place_stop_loss(self, price: float, symbol: OkxSymbol = None, position_side: str = None) -> str:
+    def place_stop_loss(
+        self,
+        price: float,
+        symbol: OkxSymbol = None,
+        position_side: str = None,
+        sz: int = None
+    ) -> str:
         if not symbol:
             symbol = self.symbol_okx
         if not position_side:
@@ -204,7 +231,7 @@ class OkxTrade():
             side = 'sell'
         if position_side == 'short':
             side = 'buy'
-        result = self.trade.place_algo_order(
+        parameters = dict(
             instId=symbol.inst_id,
             tdMode='isolated',
             side=side,
@@ -213,12 +240,18 @@ class OkxTrade():
             ordType='conditional',
             slTriggerPx=price,
             slOrdPx=-1,
-            slTriggerPxType='mark'
+            slTriggerPxType='mark',
+            sz=sz
         )
+        if sz:
+            parameters.pop('closeFraction')
+        else:
+            parameters.pop('sz')
+        result = self.trade.place_algo_order(**parameters)
         if result['code'] != '0':
             raise PlaceOrderException(result)
         order_id = result['data'][0]['algoId']
-        logger.info(f'Placed stop loss {price} {order_id=}', extra=self.strategy.extra_log)
+        logger.info(f'Placed stop loss {price=} {sz=} {order_id=}', extra=self.strategy.extra_log)
         return order_id
 
     def place_take_profit(self, price: float, symbol: OkxSymbol = None, position_side: str = None) -> str:
@@ -324,7 +357,8 @@ class OkxTrade():
         orders = []
         for order in result['data']:
             orders.append(convert_dict_values(order))
-        logger.info(f'Got {len(orders)} orders', extra=self.strategy.extra_log)
+        orders_ids = [order['ordId'] for order in orders]
+        logger.info(f'Got {len(orders)} orders, {orders_ids=}', extra=self.strategy.extra_log)
         return orders
 
     def get_order(self, symbol: OkxSymbol, order_id: str) -> dict:
@@ -353,25 +387,35 @@ class OkxTrade():
         if result['data']:
             return int(result['data'][0]['algoId'])
 
-    def update_stop_loss(self, price: float, symbol: OkxSymbol = None, position_side: str = None) -> None:
+    def update_stop_loss(
+        self,
+        price: float,
+        symbol: OkxSymbol = None,
+        position_side: str = None,
+        sz: int = None
+    ) -> None:
         if not symbol:
             symbol = self.symbol_okx
         if not position_side:
             position_side = self.position_side
         algo_id = self.get_algo_order_id()
         if not algo_id:
-            algo_id = self.place_stop_loss(price, symbol, position_side)
+            algo_id = self.place_stop_loss(price, symbol, position_side, sz)
             return
-        result = self.trade.amend_algo_order(
+        parameters = dict(
             instId=symbol.inst_id,
             algoId=algo_id,
             newSlTriggerPx=price,
             newSlOrdPx=-1,
-            newSlTriggerPxType='mark'
+            newSlTriggerPxType='mark',
+            newSz=sz
         )
+        if not sz:
+            parameters.pop('newSz')
+        result = self.trade.amend_algo_order(**parameters)
         if result['code'] != '0':
             raise PlaceOrderException(result)
-        logger.info(f'Updated stop loss {price=}', extra=self.strategy.extra_log)
+        logger.info(f'Updated stop loss {price=} {sz=}', extra=self.strategy.extra_log)
 
     def update_take_profit(self, price: float, symbol: OkxSymbol = None, position_side: str = None) -> None:
         if not symbol:
@@ -557,13 +601,14 @@ def get_ask_bid_prices_and_condition(strategy: Strategy, symbol: Symbol) -> tupl
     okx_previous_bid = prices['okx_previous_bid']
     okx_last_bid = prices['okx_last_bid']
     position_side = prices['position_side']
-    logger.debug(
-        f'{binance_previous_ask=}, {binance_last_ask=}, '
-        f'{binance_previous_bid=}, {binance_last_bid=} '
-        f'{okx_previous_ask=}, {okx_last_ask=}, '
-        f'{okx_previous_bid=}, {okx_last_bid=}',
-        extra=strategy.extra_log
-    )
+    date_time_last_prices = prices['date_time_last_prices']
+    # logger.debug(
+    #     f'{binance_previous_ask=}, {binance_last_ask=}, '
+    #     f'{binance_previous_bid=}, {binance_last_bid=} '
+    #     f'{okx_previous_ask=}, {okx_last_ask=}, '
+    #     f'{okx_previous_bid=}, {okx_last_bid=}',
+    #     extra=strategy.extra_log
+    # )
     if not all([
         binance_previous_ask, binance_last_ask, binance_previous_bid, binance_last_bid,
         okx_previous_ask, okx_last_ask, okx_previous_bid, okx_last_bid
@@ -599,28 +644,34 @@ def get_ask_bid_prices_and_condition(strategy: Strategy, symbol: Symbol) -> tupl
     )
     spread_points = (okx_last_ask - okx_last_bid) / symbol.okx.tick_size
     if position_side:
-        logger.debug(
-            f'{spread_percent=:.10f}, {spread_points=:.2f}, {delta_points=:.2f}',
-            extra=strategy.extra_log
-        )
-        logger.debug(
-            f'{binance_delta_percent=:.10f}, {okx_delta_percent=:.10f}, {position_side=}',
-            extra=strategy.extra_log
-        )
-        target_profit = strategy.tp_first_price_percent if strategy.close_position_parts else strategy.target_profit
-        min_delta_percent = strategy.open_plus_close_fee + spread_percent + target_profit
-        delta_percent = binance_delta_percent - okx_delta_percent
-        if delta_percent >= min_delta_percent:
-            condition_met = True
-            logger.info(
-                f'Second condition for {position_side} position met '
-                f'{delta_percent=:.10f} >= {min_delta_percent=:.10f}',
+        if okx_delta_percent >= 0:
+            logger.debug(
+                f'{spread_percent=:.5f}, {spread_points=:.2f}, {delta_points=:.2f}',
                 extra=strategy.extra_log
             )
+            logger.debug(
+                f'{binance_delta_percent=:.5f}, {okx_delta_percent=:.5f}, {position_side=}',
+                extra=strategy.extra_log
+            )
+            target_profit = strategy.tp_first_price_percent if strategy.close_position_parts else strategy.target_profit
+            min_delta_percent = strategy.open_plus_close_fee + spread_percent + target_profit
+            delta_percent = binance_delta_percent - okx_delta_percent
+            if delta_percent >= min_delta_percent:
+                condition_met = True
+                logger.info(
+                    f'Second condition for {position_side} position met '
+                    f'{delta_percent=:.5f} >= {min_delta_percent=:.5f}',
+                    extra=strategy.extra_log
+                )
+            else:
+                logger.debug(
+                    f'Second condition for {position_side} position not met '
+                    f'{delta_percent=:.5f} < {min_delta_percent=:.5f}',
+                    extra=strategy.extra_log
+                )
         else:
             logger.debug(
-                f'Second condition for {position_side} position not met '
-                f'{delta_percent=:.10f} < {min_delta_percent=:.10f}',
+                f'Second condition for {position_side} position not met, {okx_delta_percent=:.5f} < 0',
                 extra=strategy.extra_log
             )
     prices = dict(
@@ -636,6 +687,7 @@ def get_ask_bid_prices_and_condition(strategy: Strategy, symbol: Symbol) -> tupl
         spread_percent=spread_percent,
         delta_points=delta_points,
         delta_percent=delta_percent,
-        target_delta=min_delta_percent
+        target_delta=min_delta_percent,
+        date_time_last_prices=date_time_last_prices
     )
     return condition_met, position_side, prices

@@ -69,6 +69,7 @@ class StatusLogAdmin(admin.ModelAdmin):
         'level', 'colored_msg', 'traceback', 'create_datetime_format', 'created_by',
         'strategy', 'symbol', 'position'
     )
+    actions = ['delete_all']
 
     @admin.display(description='Message')
     def colored_msg(self, obj):
@@ -83,6 +84,11 @@ class StatusLogAdmin(admin.ModelAdmin):
             color=color,
             msg=obj.msg
         )
+
+    @admin.action(description='Delete all')
+    def delete_all(self, request, queryset):
+        StatusLog.objects.all().delete()
+        self.message_user(request, 'All logs deleted')
 
     def get_queryset(self, request) -> QuerySet[StatusLog]:
         qs = super().get_queryset(request)
@@ -255,9 +261,8 @@ class StrategyAdmin(admin.ModelAdmin):
 @admin.register(Position)
 class PositionAdmin(admin.ModelAdmin):
     list_display = (
-        'id', 'is_open', 'strategy', '_position_side', 'mode', 'symbol',
-        '_position_id', '_trade_id', '_contract', '_amount', '_time_to_close',
-        'updated_at'
+        'id', 'is_open', 'strategy', '_position_side', 'mode', 'symbol', '_position_id',
+        '_trade_id', '_contract', '_amount', '_duration', 'created_at'
     )
     fields = (
         'id', 'is_open', 'strategy', 'symbol', 'mode', '_position_data', '_sl_tp_data',
@@ -322,9 +327,21 @@ class PositionAdmin(admin.ModelAdmin):
     def _position_side(self, obj) -> str:
         return obj.position_data.get('posSide', '')
 
-    @admin.display(description='Time to close')
-    def _time_to_close(self, obj) -> str:
-        return obj.strategy.time_to_close
+    @admin.display(description='Duration, s')
+    def _duration(self, obj) -> int:
+        duration = 0
+        open_time = timezone.datetime.strptime(obj.position_data['cTime'], '%d-%m-%Y %H:%M:%S.%f')
+        if obj.is_open:
+            open_time = open_time.astimezone(timezone.get_current_timezone())
+            duration = (timezone.localtime() - open_time).total_seconds()
+        else:
+            executions = list(obj.executions.all())
+            if executions:
+                executions.sort(key=lambda x: x.created_at)
+                last_execution = executions[-1]
+                close_time = timezone.datetime.strptime(last_execution.data['ts'], '%d-%m-%Y %H:%M:%S.%f')
+                duration = (close_time - open_time).total_seconds()
+        return f'{duration:.3f}'
 
     @admin.action(description='Toggle open/close')
     def toggle_open_close(self, request, queryset):
@@ -367,8 +384,8 @@ class PositionAdmin(admin.ModelAdmin):
     def export_csv_action(self, request, queryset):
         f = StringIO()
         writer = csv.writer(f, delimiter=';')
-        writer.writerow([
-            'ІД Позиції', 'Монета', 'Дата', 'Час', 'Тип (trade/emulate)', 'Позиція (шорт/лонг)', 'Тип (open/close)',
+        headers = [
+            'ІД Позиції', 'Монета', 'Дата', 'Чаc', 'Тип (trade/emulate)', 'Позиція (шорт/лонг)', 'Тип (open/close)',
             'Аск_1 біржа№1 (парсинг)', 'Аск_2 біржа№1 (парсинг)',
             'Бід_1 біржа№1 (парсинг)', 'Бід_2 біржа№1 (парсинг)',
             'Аск_1 біржа№2 (парсинг)', 'Аск_2 біржа№2 (парсинг)',
@@ -379,12 +396,14 @@ class PositionAdmin(admin.ModelAdmin):
             'Аск_2 біржа№2 (вхід)', 'Бід_2 біржа№2 (вхід)',
             'Дельта в пунктах (вхід)', 'Дельта в % (вхід)',
             'Спред біржа №2 в пунктах (вхід)', 'Спред біржа №2 в % (вхід)',
-            'Обсяг в USDT', 'Ціна', 'Час закриття', 'Тривалість угоди в мілісекундах',
+            'Обсяг в USDT', 'Дата відкриття', 'Час відкриття', 'Ціна', 'Час закриття',
+            'Тривалість угоди в мілісекундах',
             'Комісія', 'Прибуток'
-        ])
+        ]
+        writer.writerow(headers)
         executions = (
             Execution.objects.filter(position__in=queryset)
-            .order_by('position__id', '-data__subType', 'trade_id').all()
+            .order_by('position__id', 'created_at').all()
         )
         for execution in executions:
             ask_bid_data = Namespace(**execution.position.ask_bid_data)
@@ -397,14 +416,12 @@ class PositionAdmin(admin.ModelAdmin):
             is_open = 'open' in data.subType.lower()
             base_coin = calc.get_base_coin_from_sz(data.sz, execution.position.symbol.okx.ct_val)
             usdt = round(base_coin * data.px, 2)
-            if 'open' in data.subType.lower():
-                open_date = data.ts.split(' ')[0]
-                open_time = data.ts.split(' ')[1][:-3]
+            if is_open:
                 row = [
                     execution.position.id,
                     execution.position.symbol.symbol,
-                    open_date,
-                    open_time,
+                    ask_bid_data.date_time_last_prices.split(' ')[0],
+                    ask_bid_data.date_time_last_prices.split(' ')[1],
                     execution.position.mode,
                     position_data.posSide,
                     data.subType,
@@ -430,6 +447,8 @@ class PositionAdmin(admin.ModelAdmin):
                     ask_bid_data.spread_points_entry,
                     ask_bid_data.spread_percent_entry,
                     usdt,
+                    position_data.cTime.split(' ')[0],
+                    position_data.cTime.split(' ')[1][:-3],
                     data.px,
                     None if is_open else data.ts.split(' ')[1][:-3],
                     None if is_open else duration,
@@ -437,13 +456,11 @@ class PositionAdmin(admin.ModelAdmin):
                     None if is_open else data.pnl
                 ]
             else:
-                open_date = position_data.cTime.split(' ')[0]
-                open_time = position_data.cTime.split(' ')[1][:-3]
                 row = [
                     execution.position.id,
                     execution.position.symbol.symbol,
-                    open_date,
-                    open_time,
+                    '',
+                    '',
                     execution.position.mode,
                     position_data.posSide,
                     data.subType,
@@ -469,23 +486,31 @@ class PositionAdmin(admin.ModelAdmin):
                     '',
                     '',
                     usdt,
+                    '',
+                    '',
                     data.px,
-                    None if is_open else data.ts.split(' ')[1][:-3],
-                    None if is_open else duration,
+                    '' if is_open else data.ts.split(' ')[1][:-3],
+                    '' if is_open else duration,
                     data.fee,
-                    None if is_open else data.pnl
+                    '' if is_open else data.pnl
                 ]
-            for i, j in enumerate(row):
+            d = dict(zip(headers, row))
+            for i, j in d.items():
                 if isinstance(j, float):
-                    if i in [15, 18, 24, 26]:
-                        row[i] = f'{j:.2f}'
-                    elif i in [16, 17, 19, 25, 27]:
-                        row[i] = f'{j:.5f}'
-                    elif i in [32]:
-                        row[i] = f'{j:.8f}'
-            writer.writerow(row)
+                    if i in ['Дельта в пунктах (парсинг)', 'Спред біржа №2 в пунктах (парсинг)',
+                             'Дельта в пунктах (вхід)', 'Спред біржа №2 в пунктах (вхід)']:
+                        d[i] = f'{j:.2f}'.replace('.', ',')
+                    elif i in ['Дельта в % (парсинг)', 'Дельта цільова в %',
+                               'Спред біржа №2 в % (парсинг)', 'Дельта в % (вхід)',
+                               'Спред біржа №2 в % (вхід)']:
+                        d[i] = f'{j:.5f}'.replace('.', ',')
+                    elif i in ['Комісія']:
+                        d[i] = f'{j:.8f}'.replace('.', ',')
+                    else:
+                        d[i] = str(j).replace('.', ',')
+            writer.writerow(d.values())
         f.seek(0)
-        response = HttpResponse(f.read().replace('.', ','), content_type='text/csv')
+        response = HttpResponse(f.read(), content_type='text/csv', charset='utf-8-sig')
         response['Content-Disposition'] = 'attachment; filename="positions.csv"'
         return response
 
@@ -494,7 +519,7 @@ class PositionAdmin(admin.ModelAdmin):
 class ExecutionAdmin(admin.ModelAdmin):
     list_display = (
         'id', 'position', '_type', '_contract', '_amount', '_px', '_pnl', 'bill_id', 'trade_id',
-        'updated_at'
+        'created_at'
     )
     fields = (
         'id', 'position', 'bill_id', 'trade_id', '_data', 'updated_at', 'created_at'

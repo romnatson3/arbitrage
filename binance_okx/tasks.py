@@ -2,13 +2,10 @@ import logging
 import threading
 import time
 import re
-from typing import Any, Dict, List, Optional
 from django.utils import timezone
 from django.contrib.auth import get_user_model
 from django.core.cache import cache
 from django.conf import settings
-from django.db.models import Func, Value, DateTimeField, CharField, F
-from django.db.models.expressions import RawSQL
 # from celery.utils.log import get_task_logger
 from binance.um_futures import UMFutures
 import okx.MarketData
@@ -16,16 +13,16 @@ import okx.PublicData
 import okx.Account
 from exchange.celery import app
 from .helper import TaskLock
-from .models import Strategy, Symbol, Account, Position, Execution, StatusLog, OkxSymbol, BinanceSymbol, Bill
-from .exceptions import GetPositionException, AcquireLockException, GetBillsException
-from .misc import convert_dict_values
-from .trade import OkxTrade, get_ask_bid_prices_and_condition
+from .models import Strategy, Symbol, Account, Position, StatusLog, OkxSymbol, BinanceSymbol, Bill
+from .exceptions import AcquireLockException
+from .trade import get_ask_bid_prices_and_condition
 from .strategy import (
     open_trade_position, watch_trade_position, open_emulate_position,
-    watch_emulate_position
+    watch_emulate_position, watch_increase_position
 )
 from .ws import WebSocketOkxAskBid, WebSocketBinaceAskBid, WebSocketOkxOrders
 from .handlers import write_ask_bid_to_csv_and_cache_by_symbol, save_ask_bid_to_cache, save_filled_limit_order_id
+from .exchange import OkxExchange
 
 
 logger = logging.getLogger(__name__)
@@ -107,138 +104,6 @@ def update_okx_market_price() -> None:
     logger.info(f'Updated okx market prices for {len(result["data"])} symbols')
 
 
-class OkxExchange():
-    def __init__(self, account: Account):
-        self.account = account
-        self.client = okx.Account.AccountAPI(
-            account.api_key, account.api_secret, account.api_passphrase,
-            flag='1' if account.testnet else '0',
-            debug=False
-        )
-
-    def get_open_positions(self) -> None:
-        result = self.client.get_positions(instType='SWAP')
-        if result['code'] != '0':
-            raise GetPositionException(f'Failed to get positions data. {result}')
-        open_positions = {i['instId']: convert_dict_values(i) for i in result['data']}
-        logger.info(
-            f'Found {len(open_positions)} open positions in exchange for account: {self.account.name}'
-        )
-        logger.info(f'Symbols: {", ".join(sorted(list(open_positions)))}')
-        return open_positions
-
-    def get_bills(self, bill_id: Optional[int] = None) -> list[dict[str, Any]]:
-        if not bill_id:
-            result = self.client.get_account_bills(instType='SWAP', mgnMode='isolated', type=2)
-        else:
-            result = self.client.get_account_bills(
-                instType='SWAP', mgnMode='isolated', type=2,
-                before=bill_id
-            )
-        if result['code'] != '0':
-            raise GetBillsException(result)
-        bills = list(map(convert_dict_values, result['data']))
-        for i in bills:
-            i['subType'] = Execution.sub_type.get(i['subType'], i['subType'])
-        if bill_id:
-            logger.info(
-                f'Found {len(bills)} new bills in exchange, before {bill_id=}, '
-                f'for account: {self.account.name}'
-            )
-        else:
-            logger.info(f'Got {len(bills)} last bills from exchange for account: {self.account.name}')
-        return bills
-
-    def get_new_executions_for_position(self, position: Position) -> Optional[List[Dict[str, Any]]]:
-        end_time = time.time() + settings.RECEIVE_TIMEOUT
-        last_bill_id = position.executions.values_list('bill_id', flat=True).order_by('bill_id').last()
-        if not last_bill_id:
-            logger.debug('No found any executions in database', extra=position.strategy.extra_log)
-        while time.time() < end_time:
-            if last_bill_id:
-                logger.debug(
-                    f'Trying to get new executions before bill_id: {last_bill_id}',
-                    extra=position.strategy.extra_log
-                )
-                where = {
-                    'account': self.account,
-                    'data__instId': position.symbol.okx.inst_id,
-                    'bill_id__gt': last_bill_id
-                }
-            else:
-                logger.debug(
-                    'Trying to get new executions after position creation '
-                    f'time "{position.position_data["cTime"]}"',
-                    extra=position.strategy.extra_log
-                )
-                where = {
-                    'account': self.account,
-                    'data__instId': position.symbol.okx.inst_id,
-                    'ts__gte': F('ctime')
-                }
-            executions = (
-                Bill.objects.annotate(
-                    ctime_str=Value(position.position_data['cTime'], output_field=CharField()),
-                    ctime=Func(
-                        'ctime_str',
-                        Value('DD-MM-YYYY HH24:MI:SS.US'),
-                        function='to_timestamp',
-                        output_field=DateTimeField()
-                    ),
-                    ts_str=RawSQL("data->>'ts'", []),
-                    ts=Func(
-                        'ts_str',
-                        Value('DD-MM-YYYY HH24:MI:SS.US'),
-                        function='to_timestamp',
-                        output_field=DateTimeField()
-                    )).filter(**where).values_list('data', flat=True)
-            )
-            if executions:
-                logger.info(
-                    f'Found {len(executions)} executions', extra=position.strategy.extra_log
-                )
-                return executions
-            else:
-                if position.is_open:
-                    if last_bill_id:
-                        logger.debug(
-                            'Not found any new executions for open position',
-                            extra=position.strategy.extra_log
-                        )
-                        return
-                    else:
-                        logger.warning(
-                            'Not found any executions for open position',
-                            extra=position.strategy.extra_log
-                        )
-                else:
-                    logger.warning(
-                        'Not found any new executions for closed position',
-                        extra=position.strategy.extra_log
-                    )
-            time.sleep(2)
-        else:
-            logger.critical(
-                'Failed to get executions', extra=position.strategy.extra_log
-            )
-
-    def check_single_position(self, position: Position, open_positions: Dict[str, Any]) -> None:
-        try:
-            if position.symbol.okx.inst_id in open_positions:
-                logger.debug('Position is still open in exchange', extra=position.strategy.extra_log)
-            else:
-                logger.warning('Position is closed in exchange', extra=position.strategy.extra_log)
-                position.is_open = False
-                position.save()
-                logger.info('Position is closed in database', extra=position.strategy.extra_log)
-            executions = self.get_new_executions_for_position(position)
-            if executions:
-                for execution in executions:
-                    OkxTrade.save_execution(execution, position)
-        except Exception as e:
-            logger.exception(e, extra=position.strategy.extra_log)
-
-
 @app.task
 def check_if_position_is_closed() -> None:
     try:
@@ -264,7 +129,7 @@ def check_if_position_is_closed() -> None:
                         position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
                         # exchange.check_single_position(position, open_positions)
                         thread = threading.Thread(
-                            target=exchange.check_single_position,
+                            target=exchange.check_and_update_single_position,
                             args=(position, open_positions)
                         )
                         threads.append(thread)
@@ -341,10 +206,11 @@ def trade_strategy_for_symbol(strategy_id: int, symbol: str) -> None:
         with TaskLock(f'task_strategy_{strategy_id}_{symbol.symbol}'):
             position = strategy.positions.filter(symbol=symbol, is_open=True).last()
             strategy._extra_log.update(symbol=symbol.symbol, position=position.id if position else None)
+            condition_met, position_side, prices = get_ask_bid_prices_and_condition(strategy, symbol)
             if position:
                 watch_trade_position(strategy, position)
+                watch_increase_position(strategy, position, condition_met, prices)
                 return
-            condition_met, position_side, prices = get_ask_bid_prices_and_condition(strategy, symbol)
             if condition_met:
                 open_trade_position(strategy, symbol, position_side, prices)
     except AcquireLockException:

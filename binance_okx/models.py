@@ -398,6 +398,7 @@ class PositionManager(models.Manager):
         return (
             super().get_queryset()
             .select_related('symbol', 'strategy')
+            .prefetch_related('executions')
         )
 
     def create(self, *args, **kwargs):
@@ -419,15 +420,25 @@ class Position(BaseModel):
         data = {
             'stop_loss_price': None,
             'stop_loss_breakeven': None,
+            'stop_loss_breakeven_set': None,
             'take_profit_price': None,
             'tp_first_price': None,
             'tp_first_part': None,
             'tp_second_price': None,
             'tp_second_part': None,
             'tp_first_limit_order_id': None,
-            'stop_loss_breakeven_set': None,
+            'tp_second_limit_order_id': None,
             'first_part_closed': None,
-            'second_part_closed': None
+            'second_part_closed': None,
+            'third_part_closed': None,
+            'fourth_part_closed': None,
+            'increased_position': None,
+            'tp_third_limit_order_id': None,
+            'tp_fourth_limit_order_id': None,
+            'tp_third_price': None,
+            'tp_third_part': None,
+            'tp_fourth_price': None,
+            'tp_fourth_part': None,
         }
         return data
 
@@ -522,6 +533,7 @@ class Position(BaseModel):
             'delta_percent_entry': None,
             'spread_points_entry': None,
             'spread_percent_entry': None,
+            'date_time_last_prices': None
         }
         return data
 
