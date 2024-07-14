@@ -111,7 +111,7 @@ def open_trade_position(strategy: Strategy, symbol: Symbol, position_side: str, 
         f'Opening {position_side} position, size {strategy.position_size} usdt',
         extra=strategy.extra_log
     )
-    _, _, prices_entry = get_ask_bid_prices_and_condition(strategy, symbol)
+    _, _, prices_entry = get_ask_bid_prices_and_condition(strategy, symbol, prices)
     trade = OkxTrade(strategy, symbol, position_side)
     position = trade.open_position()
     position = fill_position_data(strategy, position, prices, prices_entry)

@@ -585,20 +585,30 @@ def get_stop_loss_breakeven(entry_price: float, fee_percent: float, spread_perce
     return round(stop_loss_price, 5)
 
 
-def get_ask_bid_prices_and_condition(strategy: Strategy, symbol: Symbol) -> tuple[bool, str, dict]:
+def get_ask_bid_prices_and_condition(
+    strategy: Strategy,
+    symbol: Symbol,
+    previous_prices: dict = None
+) -> tuple[bool, str, dict]:
     delta_percent = None
     delta_points = None
     spread_points = None
     condition_met = False
     min_delta_percent = None
     prices = get_ask_bid_prices_from_cache_by_symbol(strategy, symbol.symbol)
-    binance_previous_ask = prices['binance_previous_ask']
+    if previous_prices:
+        binance_previous_ask = previous_prices['binance_previous_ask']
+        binance_previous_bid = previous_prices['binance_previous_bid']
+        okx_previous_ask = previous_prices['okx_previous_ask']
+        okx_previous_bid = previous_prices['okx_previous_bid']
+    else:
+        binance_previous_ask = prices['binance_previous_ask']
+        binance_previous_bid = prices['binance_previous_bid']
+        okx_previous_ask = prices['okx_previous_ask']
+        okx_previous_bid = prices['okx_previous_bid']
     binance_last_ask = prices['binance_last_ask']
-    binance_previous_bid = prices['binance_previous_bid']
     binance_last_bid = prices['binance_last_bid']
-    okx_previous_ask = prices['okx_previous_ask']
     okx_last_ask = prices['okx_last_ask']
-    okx_previous_bid = prices['okx_previous_bid']
     okx_last_bid = prices['okx_last_bid']
     position_side = prices['position_side']
     date_time_last_prices = prices['date_time_last_prices']
