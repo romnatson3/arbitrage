@@ -105,8 +105,7 @@ services:
       - postgres
       - default
       - position
-      - trade
-      - emulate
+      - symbol
       - websocket_okx_orders
       - websocket_okx_ask_bid
       - websocket_binance_ask_bid
@@ -142,6 +141,28 @@ services:
         tag: exchange_default
         syslog-facility: local5
 
+  symbol:
+    image: exchange:latest
+    entrypoint: celery -A exchange worker -c 15 -l INFO -Q symbol
+    deploy:
+      mode: replicated
+      replicas: 1
+    restart: always
+    depends_on:
+      - rabbitmq
+      - redis
+      - postgres
+      - web
+    env_file:
+      - .env
+    networks:
+      - layer
+    logging:
+      driver: syslog
+      options:
+        tag: exchange_symbol
+        syslog-facility: local5
+
   position:
     image: exchange:latest
     entrypoint: celery -A exchange worker -c 15 -l INFO -Q position
@@ -164,53 +185,9 @@ services:
         tag: exchange_position
         syslog-facility: local5
 
-  trade:
-    image: exchange:latest
-    entrypoint: celery -A exchange worker -c 10 -l INFO -Q trade
-    deploy:
-      mode: replicated
-      replicas: 1
-    restart: always
-    depends_on:
-      - rabbitmq
-      - redis
-      - postgres
-      - web
-    env_file:
-      - .env
-    networks:
-      - layer
-    logging:
-      driver: syslog
-      options:
-        tag: exchange_trade
-        syslog-facility: local5
-
-  emulate:
-    image: exchange:latest
-    entrypoint: celery -A exchange worker -c 10 -l INFO -Q emulate
-    deploy:
-      mode: replicated
-      replicas: 1
-    restart: always
-    depends_on:
-      - rabbitmq
-      - redis
-      - postgres
-      - web
-    env_file:
-      - .env
-    networks:
-      - layer
-    logging:
-      driver: syslog
-      options:
-        tag: exchange_emulate
-        syslog-facility: local5
-
   websocket_okx_orders:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 2 -l INFO -Q websocket_okx_orders
+    entrypoint: celery -A exchange worker -c 1 -l INFO -Q websocket_okx_orders
     deploy:
       mode: replicated
       replicas: 1

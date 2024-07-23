@@ -168,6 +168,9 @@ class Symbol(BaseModel):
     def __str__(self):
         return self.symbol
 
+    def __repr__(self):
+        return self.__str__()
+
 
 class StrategyManager(models.Manager):
     def get_queryset(self) -> QuerySet:
@@ -175,20 +178,18 @@ class StrategyManager(models.Manager):
             super().get_queryset()
             .select_related('first_account', 'second_account', 'created_by')
             .prefetch_related('symbols')
+            # .prefetch_related('symbols', 'positions')
         )
 
     def cache(self, **kwargs) -> QuerySet:
-        set = kwargs.pop('set', False)
+        timeout = kwargs.pop('_timeout', 60)
         key = f'strategies_{kwargs}'
-        if set:
-            queryset = self.filter(**kwargs)
-            cache.set(key, queryset, timeout=60)
-            return queryset
         queryset = cache.get(key)
         if queryset is not None:
             return queryset
         else:
-            queryset = self.filter(**kwargs)
+            queryset = self.filter(**kwargs).order_by('-id')
+            cache.set(key, queryset, timeout=timeout)
             return queryset
 
 
@@ -288,6 +289,9 @@ class Strategy(BaseModel):
 
     def __str__(self):
         return f'{self.id}_{self.mode}_{self.name}'
+
+    def __repr__(self):
+        return self.__str__()
 
 
 class ExecutionManager(models.Manager):
@@ -406,6 +410,17 @@ class PositionManager(models.Manager):
         kwargs['ask_bid_data'] = Position.get_ask_bid_empty_data()
         position = super().create(*args, **kwargs)
         return position
+
+    def cache(self, **kwargs) -> QuerySet:
+        timeout = kwargs.pop('_timeout', 10)
+        key = f'positions_{kwargs}'
+        queryset = cache.get(key)
+        if queryset is not None:
+            return queryset
+        else:
+            queryset = self.filter(**kwargs).order_by('-id')
+            cache.set(key, queryset, timeout=timeout)
+            return queryset
 
 
 class Position(BaseModel):

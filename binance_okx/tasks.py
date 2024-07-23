@@ -18,10 +18,13 @@ from .exceptions import AcquireLockException
 from .trade import get_ask_bid_prices_and_condition
 from .strategy import (
     open_trade_position, watch_trade_position, open_emulate_position,
-    watch_emulate_position, watch_increase_position
+    watch_emulate_position, increase_position
 )
 from .ws import WebSocketOkxAskBid, WebSocketBinaceAskBid, WebSocketOkxOrders
-from .handlers import write_ask_bid_to_csv_and_cache_by_symbol, save_ask_bid_to_cache, save_filled_limit_order_id
+from .handlers import (
+    write_ask_bid_to_csv_and_cache_by_symbol, save_ask_bid_to_cache,
+    save_filled_limit_order_id
+)
 from .exchange import OkxExchange
 
 
@@ -188,31 +191,26 @@ def update_bills():
 @app.task
 def run_strategy(strategy_id: int) -> None:
     try:
-        strategy = Strategy.objects.cache(id=strategy_id, enabled=True, set=True)[0]
+        strategy = Strategy.objects.cache(id=strategy_id, enabled=True)[0]
         for symbol in strategy.symbols.all():
-            if strategy.mode == Strategy.Mode.trade:
-                trade_strategy_for_symbol.delay(strategy.id, symbol.symbol)
-            elif strategy.mode == Strategy.Mode.emulate:
-                emulate_strategy_for_symbol.delay(strategy.id, symbol.symbol)
+            watch_position_for_symbol.delay(strategy.id, symbol.symbol)
     except Exception as e:
         logger.exception(e, extra=strategy.extra_log)
 
 
 @app.task
-def trade_strategy_for_symbol(strategy_id: int, symbol: str) -> None:
+def watch_position_for_symbol(strategy_id: int, symbol: str) -> None:
     try:
-        strategy = Strategy.objects.cache(id=strategy_id)[0]
+        strategy = Strategy.objects.cache(id=strategy_id, enabled=True)[0]
         symbol = Symbol.objects.get(symbol=symbol)
-        with TaskLock(f'task_strategy_{strategy_id}_{symbol.symbol}'):
+        with TaskLock(f'watch_position_for_symbol_{strategy_id}_{symbol.symbol}'):
             position = strategy.positions.filter(symbol=symbol, is_open=True).last()
             strategy._extra_log.update(symbol=symbol.symbol, position=position.id if position else None)
-            condition_met, position_side, prices = get_ask_bid_prices_and_condition(strategy, symbol)
             if position:
-                watch_trade_position(strategy, position)
-                watch_increase_position(strategy, position, condition_met, prices)
-                return
-            if condition_met:
-                open_trade_position(strategy, symbol, position_side, prices)
+                if strategy.mode == Strategy.Mode.trade:
+                    watch_trade_position(strategy, position)
+                elif strategy.mode == Strategy.Mode.emulate:
+                    watch_emulate_position(strategy, position)
     except AcquireLockException:
         logger.debug('Task is already running', extra=strategy.extra_log)
     except Exception as e:
@@ -221,23 +219,31 @@ def trade_strategy_for_symbol(strategy_id: int, symbol: str) -> None:
 
 
 @app.task
-def emulate_strategy_for_symbol(strategy_id: int, symbol: str) -> None:
+def check_condition_met_by_symbol(symbol: str) -> None:
     try:
-        strategy = Strategy.objects.cache(id=strategy_id)[0]
         symbol = Symbol.objects.get(symbol=symbol)
-        with TaskLock(f'task_emulate_strategy_{strategy_id}_{symbol.symbol}'):
-            position = strategy.positions.filter(symbol=symbol, is_open=True).last()
-            strategy._extra_log.update(symbol=symbol.symbol, position=position.id if position else None)
-            if position:
-                watch_emulate_position(strategy, position)
-                return
+        strategies = Strategy.objects.cache(enabled=True, symbols=symbol)
+        for strategy in strategies:
+            positions = Position.objects.cache(strategy=strategy, symbol=symbol, is_open=True)
+            if positions:
+                position = positions[0]
+            else:
+                position = None
+            strategy._extra_log.update(symbol=symbol, position=position.id if position else None)
             condition_met, position_side, prices = get_ask_bid_prices_and_condition(strategy, symbol)
             if condition_met:
-                open_emulate_position(strategy, symbol, position_side, prices)
+                with TaskLock(f'task_check_condition_met_{symbol}'):
+                    if strategy.mode == Strategy.Mode.trade:
+                        if position:
+                            increase_position(strategy, position, condition_met, prices)
+                        else:
+                            open_trade_position(strategy, symbol, position_side, prices)
+                    elif strategy.mode == Strategy.Mode.emulate:
+                        open_emulate_position(strategy, symbol, position_side, prices)
     except AcquireLockException:
-        logger.debug('Task is already running', extra=strategy.extra_log)
+        logger.debug(f'{symbol} task is already running')
     except Exception as e:
-        logger.exception(e, extra=strategy.extra_log)
+        logger.exception(e)
         raise e
 
 
@@ -317,6 +323,9 @@ def run_websocket_binance_ask_bid() -> None:
                 return
             ws_binance_ask_bid.start()
             ws_binance_ask_bid.add_handler(write_ask_bid_to_csv_and_cache_by_symbol)
+            ws_binance_ask_bid.add_handler(
+                lambda data: check_condition_met_by_symbol.delay(data['s'])
+            )
             time.sleep(3)
     except AcquireLockException:
         logger.debug('Task run_websocket_binance_ask_bid is already running')

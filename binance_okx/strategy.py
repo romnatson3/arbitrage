@@ -135,7 +135,7 @@ def open_trade_position(strategy: Strategy, symbol: Symbol, position_side: str, 
         trade.update_stop_loss(price=sl_tp_data.stop_loss_price, sz=position.position_data['pos'])
 
 
-def watch_increase_position(strategy: Strategy, position: Position, condition_met: bool, prices: dict) -> None:
+def increase_position(strategy: Strategy, position: Position, condition_met: bool, prices: dict) -> None:
     if not position.sl_tp_data['increased_position'] and condition_met and position.sl_tp_data['stop_loss_breakeven_set']:
         trade = OkxTrade(strategy, position.symbol, position.side)
         trade.increase_position()
@@ -159,7 +159,7 @@ def watch_increase_position(strategy: Strategy, position: Position, condition_me
 
 
 def watch_trade_position(strategy: Strategy, position: Position) -> None:
-    logger.debug('Watching position state', extra=strategy.extra_log)
+    logger.debug('Watching trade position state', extra=strategy.extra_log)
     sl_tp_data = Namespace(**position.sl_tp_data)
     market_price = position.symbol.okx.market_price
     trade = OkxTrade(strategy, position.symbol, position.side)
@@ -280,7 +280,7 @@ def open_emulate_position(strategy: Strategy, symbol: Symbol, position_side: str
 
 
 def watch_emulate_position(strategy: Strategy, position: Position) -> None:
-    logger.debug('Virtual position is open', extra=strategy.extra_log)
+    logger.debug('Watching virtual position state', extra=strategy.extra_log)
     position_data = Namespace(**position.position_data)
     sl_tp_data = Namespace(**position.sl_tp_data)
     trade = OkxEmulateTrade(strategy, position.symbol)
