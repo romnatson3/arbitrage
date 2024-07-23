@@ -6,9 +6,16 @@ import pathlib
 from datetime import datetime
 from .helper import SavedOkxOrderId
 from django_redis import get_redis_connection
+from django.core.cache import cache
 
 
 logger = logging.getLogger(__name__)
+
+
+def save_okx_market_price_to_cache(data: dict) -> None:
+    symbol = ''.join(data['instId'].split('-')[:-1])
+    market_price = float(data['markPx'])
+    cache.set(f'okx_market_price_{symbol}', market_price)
 
 
 def save_filled_limit_order_id(data: dict) -> None:

@@ -174,17 +174,18 @@ class WebSocketOkxAskBid():
 
     def launch(self):
         try:
+            names = list(self._threads.keys())
             run_forever_thread = threading.Thread(
-                target=self.run_forever, daemon=True, name='run_forever_okx_ask_bid')
+                target=self.run_forever, daemon=True, name=names[0])
             run_forever_thread.start()
             self._threads[run_forever_thread.name] = run_forever_thread
             logger.info(f'{self.__class__.__name__} is started')
-            ping_thread = threading.Thread(target=self.ping, daemon=True, name='ping_okx_ask_bid')
+            ping_thread = threading.Thread(target=self.ping, daemon=True, name=names[1])
             ping_thread.start()
             self._threads[ping_thread.name] = ping_thread
             logger.info('Ping thread is started')
             monitor_thread = threading.Thread(
-                target=self.monitoring_inst_ids, daemon=True, name='monitor_okx_ask_bid')
+                target=self.monitoring_inst_ids, daemon=True, name=names[2])
             monitor_thread.start()
             self._threads[monitor_thread.name] = monitor_thread
             logger.info('Monitoring thread is started')
@@ -369,3 +370,65 @@ class WebSocketOkxOrders(WebSocketOkxAskBid):
         ping_thread.start()
         self._threads[ping_thread.name] = ping_thread
         logger.info(f'WebSocketOkxOrders for {self.account.name} is started')
+
+
+class WebSocketOkxMarketPrice(WebSocketOkxAskBid):
+    def __init__(self) -> None:
+        super().__init__()
+        self._threads = dict(
+            run_forever_okx_market_price=None, ping_okx_market_price=None, monitor_okx_market_price=None)
+        self.previous_market_price: dict[str, float] = {}
+
+    def subscribe_inst_id(self, inst_ids: list[str]) -> dict:
+        for inst_id in inst_ids:
+            d = {
+                'op': 'subscribe',
+                'args': [{
+                    'channel': 'mark-price',
+                    'instId': inst_id
+                }]
+            }
+            self.ws.send(json.dumps(d))
+            time.sleep(0.2)
+            self._subscribed_inst_ids.append(inst_id)
+            logger.info(f'Subscribed to {inst_id=}')
+
+    def unsubscribe_inst_id(self, inst_ids: list[str]) -> dict:
+        for inst_id in inst_ids:
+            d = {
+                'op': 'unsubscribe',
+                'args': [{
+                    'channel': 'mark-price',
+                    'instId': inst_id
+                }]
+            }
+            self.ws.send(json.dumps(d))
+            time.sleep(0.2)
+            if inst_id in self._subscribed_inst_ids:
+                self._subscribed_inst_ids.remove(inst_id)
+            logger.info(f'Unsubscribed from {inst_id=}')
+
+    def _message_handler(self, message: str) -> None | dict:
+        if message == 'pong':
+            logger.debug(f'{self.__class__.__name__} pong received')
+            return
+        try:
+            message = json.loads(message)
+        except json.decoder.JSONDecodeError:
+            return
+        event = message.get('event')
+        data = message.get('data')
+        if event == 'error':
+            logger.error(message)
+        elif event == 'subscribe':
+            logger.info(f'Subscribe {message}')
+        elif event == 'unsubscribe':
+            logger.info(f'Unsubscribe {message}')
+        elif data:
+            data = data[0]
+            previous_market_price = self.previous_market_price.get(data['instId'])
+            if previous_market_price:
+                if previous_market_price == data['markPx']:
+                    return
+            self.previous_market_price[data['instId']] = data['markPx']
+            return {k: v for k, v in data.items() if k in ['instId', 'markPx', 'ts']}

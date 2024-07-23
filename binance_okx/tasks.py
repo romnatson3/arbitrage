@@ -20,10 +20,10 @@ from .strategy import (
     open_trade_position, watch_trade_position, open_emulate_position,
     watch_emulate_position, increase_position
 )
-from .ws import WebSocketOkxAskBid, WebSocketBinaceAskBid, WebSocketOkxOrders
+from .ws import WebSocketOkxAskBid, WebSocketBinaceAskBid, WebSocketOkxOrders, WebSocketOkxMarketPrice
 from .handlers import (
     write_ask_bid_to_csv_and_cache_by_symbol, save_ask_bid_to_cache,
-    save_filled_limit_order_id
+    save_filled_limit_order_id, save_okx_market_price_to_cache
 )
 from .exchange import OkxExchange
 
@@ -89,22 +89,22 @@ def update_symbols() -> None:
                 break
 
 
-@app.task
-def update_okx_market_price() -> None:
-    try:
-        with TaskLock('okx_task_update_market_price'):
-            client = okx.PublicData.PublicAPI(flag=settings.OKX_FLAG)
-            result = client.get_mark_price(instType='SWAP')
-            for i in result['data']:
-                symbol = ''.join(i['instId'].split('-')[:-1])
-                market_price = float(i['markPx'])
-                cache.set(f'okx_market_price_{symbol}', market_price)
-    except AcquireLockException:
-        logger.debug('Task update_okx_market_price is already running')
-    except Exception as e:
-        logger.exception(e)
-        raise e
-    logger.info(f'Updated okx market prices for {len(result["data"])} symbols')
+# @app.task
+# def update_okx_market_price() -> None:
+#     try:
+#         with TaskLock('okx_task_update_market_price'):
+#             client = okx.PublicData.PublicAPI(flag=settings.OKX_FLAG)
+#             result = client.get_mark_price(instType='SWAP')
+#             for i in result['data']:
+#                 symbol = ''.join(i['instId'].split('-')[:-1])
+#                 market_price = float(i['markPx'])
+#                 cache.set(f'okx_market_price_{symbol}', market_price)
+#     except AcquireLockException:
+#         logger.debug('Task update_okx_market_price is already running')
+#     except Exception as e:
+#         logger.exception(e)
+#         raise e
+#     logger.info(f'Updated okx market prices for {len(result["data"])} symbols')
 
 
 @app.task
@@ -211,6 +211,8 @@ def watch_position_for_symbol(strategy_id: int, symbol: str) -> None:
                     watch_trade_position(strategy, position)
                 elif strategy.mode == Strategy.Mode.emulate:
                     watch_emulate_position(strategy, position)
+            else:
+                logger.debug('No open position found', extra=strategy.extra_log)
     except AcquireLockException:
         logger.debug('Task is already running', extra=strategy.extra_log)
     except Exception as e:
@@ -279,6 +281,32 @@ def run_websocket_okx_orders() -> None:
 
 ws_okx_ask_bid = WebSocketOkxAskBid()
 ws_binance_ask_bid = WebSocketBinaceAskBid()
+ws_okx_market_price = WebSocketOkxMarketPrice()
+
+
+@app.task
+def run_websocket_okx_market_price() -> None:
+    try:
+        with TaskLock('task_run_websocket_okx_market_price'):
+            ws_okx_market_price._threads.update(
+                (i.name, i) for i in threading.enumerate() if i.name in ws_okx_market_price._threads
+            )
+            for name, thread in ws_okx_market_price._threads.items():
+                if not thread or not thread.is_alive():
+                    logger.warning(f'WebSocketOkxMarketPrice thread "{name}" is not running')
+                    ws_okx_market_price._kill()
+                    break
+            else:
+                logger.debug('WebSocketOkxMarketPrice all threads are running')
+                return
+            ws_okx_market_price.start()
+            ws_okx_market_price.add_handler(save_okx_market_price_to_cache)
+            time.sleep(3)
+    except AcquireLockException:
+        logger.debug('Task run_websocket_okx_market_price is already running')
+    except Exception as e:
+        logger.exception(e)
+        raise e
 
 
 @app.task

@@ -252,3 +252,25 @@ services:
       options:
         tag: exchange_websocket_binance_ask_bid
         syslog-facility: local5
+
+  websocket_okx_market_price:
+    image: exchange:latest
+    entrypoint: celery -A exchange worker -c 1 -l INFO -Q websocket_okx_market_price
+    deploy:
+      mode: replicated
+      replicas: 1
+    restart: always
+    depends_on:
+      - rabbitmq
+      - redis
+      - postgres
+      - web
+    env_file:
+      - .env
+    networks:
+      - layer
+    logging:
+      driver: syslog
+      options:
+        tag: exchange_websocket_okx_market_price
+        syslog-facility: local5
