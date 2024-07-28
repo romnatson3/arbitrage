@@ -12,10 +12,9 @@ import okx.MarketData
 import okx.PublicData
 import okx.Account
 from exchange.celery import app
-from .helper import TaskLock
+from .helper import TaskLock, check_all_conditions
 from .models import Strategy, Symbol, Account, Position, StatusLog, OkxSymbol, BinanceSymbol, Bill
 from .exceptions import AcquireLockException
-from .trade import get_ask_bid_prices_and_condition
 from .strategy import (
     open_trade_position, watch_trade_position, open_emulate_position,
     watch_emulate_position, increase_position
@@ -108,22 +107,20 @@ def update_symbols() -> None:
 
 
 @app.task
-def check_if_position_is_closed() -> None:
+def check_position_on_exchange() -> None:
     try:
         accounts = Account.objects.filter(exchange='okx').all()
         if not accounts:
-            logger.debug('Check if position is closed: No okx accounts found')
+            logger.debug('Check position on exchange, no okx accounts found')
             return
-        with TaskLock('okx_task_check_if_position_is_closed'):
+        with TaskLock('okx_task_check_position_on_exchange'):
             for account in accounts:
                 try:
                     open_positions_db = Position.objects.filter(
                         is_open=True, mode=Strategy.Mode.trade,
                         strategy__second_account=account).all()
                     if not open_positions_db:
-                        logger.debug(
-                            f'No found any open positions in database for account: {account.name}'
-                        )
+                        logger.debug(f'{account.name} account has no open positions in db')
                         continue
                     exchange = OkxExchange(account)
                     open_positions = exchange.get_open_positions()
@@ -143,7 +140,7 @@ def check_if_position_is_closed() -> None:
                     logger.exception(e)
                     continue
     except AcquireLockException:
-        logger.debug('Task check_if_position_is_closed is already running')
+        logger.debug('Task check_position_on_exchange is already running')
     except Exception as e:
         logger.exception(e)
         raise e
@@ -174,10 +171,10 @@ def update_bills():
                     ]
                     if new_bills:
                         Bill.objects.bulk_create(new_bills, ignore_conflicts=True)
-                        logger.info(f'Saved {len(new_bills)} bills to db for account: {account.name}')
+                        logger.info(f'{account.name}. Saved {len(new_bills)} bills to db')
                         logger.info(f'Bill ids: {", ".join([str(b.bill_id) for b in new_bills])}')
                     else:
-                        logger.info(f'All bills are already exist in db for account: {account.name}')
+                        logger.info(f'{account.name}. All bills are already exist in db')
                 except Exception as e:
                     logger.exception(e)
                     continue
@@ -193,17 +190,18 @@ def run_strategy(strategy_id: int) -> None:
     try:
         strategy = Strategy.objects.cache(id=strategy_id, enabled=True)[0]
         for symbol in strategy.symbols.all():
-            watch_position_for_symbol.delay(strategy.id, symbol.symbol)
+            watch_position.delay(strategy.id, symbol.symbol)
     except Exception as e:
         logger.exception(e, extra=strategy.extra_log)
 
 
 @app.task
-def watch_position_for_symbol(strategy_id: int, symbol: str) -> None:
+def watch_position(strategy_id: int, symbol: str) -> None:
     try:
         strategy = Strategy.objects.cache(id=strategy_id, enabled=True)[0]
-        symbol = Symbol.objects.get(symbol=symbol)
-        with TaskLock(f'watch_position_for_symbol_{strategy_id}_{symbol.symbol}'):
+        symbol = Symbol.objects.cache(symbol=symbol)[0]
+        strategy._extra_log.update(symbol=symbol)
+        with TaskLock(f'watch_position_{strategy_id}_{symbol.symbol}'):
             position = strategy.positions.filter(symbol=symbol, is_open=True).last()
             strategy._extra_log.update(symbol=symbol.symbol, position=position.id if position else None)
             if position:
@@ -221,31 +219,40 @@ def watch_position_for_symbol(strategy_id: int, symbol: str) -> None:
 
 
 @app.task
-def check_condition_met_by_symbol(symbol: str) -> None:
+def check_condition_met(symbol: str) -> None:
     try:
-        symbol = Symbol.objects.get(symbol=symbol)
+        symbol = Symbol.objects.cache(symbol=symbol)[0]
         strategies = Strategy.objects.cache(enabled=True, symbols=symbol)
         for strategy in strategies:
-            positions = Position.objects.cache(strategy=strategy, symbol=symbol, is_open=True)
-            if positions:
-                position = positions[0]
-            else:
-                position = None
-            strategy._extra_log.update(symbol=symbol, position=position.id if position else None)
-            condition_met, position_side, prices = get_ask_bid_prices_and_condition(strategy, symbol)
+            strategy._extra_log.update(symbol=symbol)
+            condition_met, position_side, prices = check_all_conditions(strategy, symbol)
             if condition_met:
-                with TaskLock(f'task_check_condition_met_{symbol}'):
-                    if strategy.mode == Strategy.Mode.trade:
-                        if position:
-                            increase_position(strategy, position, condition_met, prices)
-                        else:
-                            open_trade_position(strategy, symbol, position_side, prices)
-                    elif strategy.mode == Strategy.Mode.emulate:
-                        open_emulate_position(strategy, symbol, position_side, prices)
-    except AcquireLockException:
-        logger.debug(f'{symbol} task is already running')
+                open_position.delay(strategy.id, symbol.symbol, position_side, prices)
     except Exception as e:
         logger.exception(e)
+        raise e
+
+
+@app.task
+def open_position(strategy_id: int, symbol: str, position_side: str, prices: dict) -> None:
+    try:
+        symbol = Symbol.objects.get(symbol=symbol)
+        strategy = Strategy.objects.get(id=strategy_id)
+        strategy._extra_log.update(symbol=symbol)
+        with TaskLock(f'open_position_{symbol.symbol}'):
+            position = Position.objects.filter(strategy=strategy, symbol=symbol, is_open=True).last()
+            strategy._extra_log.update(symbol=symbol, position=position.id if position else None)
+            if strategy.mode == Strategy.Mode.trade:
+                if position:
+                    increase_position(strategy, position, prices)
+                else:
+                    open_trade_position(strategy, symbol, position_side, prices)
+            elif strategy.mode == Strategy.Mode.emulate:
+                open_emulate_position(strategy, symbol, position_side, prices)
+    except AcquireLockException:
+        logger.debug('Task is already running', extra=strategy.extra_log)
+    except Exception as e:
+        logger.exception(e, extra=strategy.extra_log)
         raise e
 
 
@@ -352,7 +359,7 @@ def run_websocket_binance_ask_bid() -> None:
             ws_binance_ask_bid.start()
             ws_binance_ask_bid.add_handler(write_ask_bid_to_csv_and_cache_by_symbol)
             ws_binance_ask_bid.add_handler(
-                lambda data: check_condition_met_by_symbol.delay(data['s'])
+                lambda data: check_condition_met.delay(data['s'])
             )
             time.sleep(3)
     except AcquireLockException:

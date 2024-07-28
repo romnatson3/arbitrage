@@ -3,10 +3,8 @@ from django.utils import timezone
 from types import SimpleNamespace as Namespace
 from .models import Strategy, Symbol, Position
 from .helper import calc, SavedOkxOrderId
-from .trade import (
-    OkxTrade, OkxEmulateTrade, get_ask_bid_prices_and_condition,
-    get_take_profit_grid, get_stop_loss_breakeven
-)
+from .trade import OkxTrade, OkxEmulateTrade, get_take_profit_grid, get_stop_loss_breakeven
+from .helper import calculation_delta_and_points_for_entry
 
 
 logger = logging.getLogger(__name__)
@@ -111,8 +109,8 @@ def open_trade_position(strategy: Strategy, symbol: Symbol, position_side: str, 
         f'Opening {position_side} position, size {strategy.position_size} usdt',
         extra=strategy.extra_log
     )
-    _, _, prices_entry = get_ask_bid_prices_and_condition(strategy, symbol, prices)
     trade = OkxTrade(strategy, symbol, position_side)
+    prices_entry = calculation_delta_and_points_for_entry(symbol, position_side, prices)
     position = trade.open_position()
     position = fill_position_data(strategy, position, prices, prices_entry)
     sl_tp_data = Namespace(**position.sl_tp_data)
@@ -135,8 +133,8 @@ def open_trade_position(strategy: Strategy, symbol: Symbol, position_side: str, 
         trade.update_stop_loss(price=sl_tp_data.stop_loss_price, sz=position.position_data['pos'])
 
 
-def increase_position(strategy: Strategy, position: Position, condition_met: bool, prices: dict) -> None:
-    if not position.sl_tp_data['increased_position'] and condition_met and position.sl_tp_data['stop_loss_breakeven_set']:
+def increase_position(strategy: Strategy, position: Position, prices: dict) -> None:
+    if not position.sl_tp_data['increased_position'] and position.sl_tp_data['stop_loss_breakeven_set']:
         trade = OkxTrade(strategy, position.symbol, position.side)
         trade.increase_position()
         position.sl_tp_data['increased_position'] = True

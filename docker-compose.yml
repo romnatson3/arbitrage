@@ -104,8 +104,9 @@ services:
       - redis
       - postgres
       - default
-      - position
-      - symbol
+      - open_position
+      - watch_position
+      - check_condition
       - websocket_okx_orders
       - websocket_okx_ask_bid
       - websocket_binance_ask_bid
@@ -141,9 +142,9 @@ services:
         tag: exchange_default
         syslog-facility: local5
 
-  symbol:
+  check_condition:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 15 -l INFO -Q symbol
+    entrypoint: celery -A exchange worker -c 15 -l INFO -Q check_condition
     deploy:
       mode: replicated
       replicas: 1
@@ -160,12 +161,12 @@ services:
     logging:
       driver: syslog
       options:
-        tag: exchange_symbol
+        tag: exchange_check_condition
         syslog-facility: local5
 
-  position:
+  open_position:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 15 -l INFO -Q position
+    entrypoint: celery -A exchange worker -c 15 -l INFO -Q open_position
     deploy:
       mode: replicated
       replicas: 1
@@ -182,7 +183,29 @@ services:
     logging:
       driver: syslog
       options:
-        tag: exchange_position
+        tag: exchange_open_position
+        syslog-facility: local5
+
+  watch_position:
+    image: exchange:latest
+    entrypoint: celery -A exchange worker -c 15 -l INFO -Q watch_position
+    deploy:
+      mode: replicated
+      replicas: 1
+    restart: always
+    depends_on:
+      - rabbitmq
+      - redis
+      - postgres
+      - web
+    env_file:
+      - .env
+    networks:
+      - layer
+    logging:
+      driver: syslog
+      options:
+        tag: exchange_watch_position
         syslog-facility: local5
 
   websocket_okx_orders:

@@ -28,9 +28,7 @@ class OkxExchange():
         if result['code'] != '0':
             raise GetPositionException(f'Failed to get positions data. {result}')
         open_positions = {i['instId']: convert_dict_values(i) for i in result['data']}
-        logger.info(
-            f'Found {len(open_positions)} open positions in exchange for account: {self.account.name}'
-        )
+        logger.info(f'{self.account.name}. Found {len(open_positions)} open positions in exchange')
         logger.info(f'Symbols: {", ".join(sorted(list(open_positions)))}')
         return open_positions
 
@@ -53,7 +51,7 @@ class OkxExchange():
                 f'for account: {self.account.name}'
             )
         else:
-            logger.info(f'Got {len(bills)} last bills from exchange for account: {self.account.name}')
+            logger.info(f'{self.account.name}. Got {len(bills)} last bills from exchange')
         return bills
 
     def get_new_executions_for_position(self, position: Position) -> Optional[List[Dict[str, Any]]]:

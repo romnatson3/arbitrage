@@ -153,6 +153,17 @@ class SymbolManager(models.Manager):
             .select_related('okx', 'binance')
         )
 
+    def cache(self, **kwargs) -> QuerySet:
+        timeout = kwargs.pop('_timeout', 60)
+        key = f'symbols_{kwargs}'
+        queryset = cache.get(key)
+        if queryset is not None:
+            return queryset
+        else:
+            queryset = self.filter(**kwargs).order_by('symbol')
+            cache.set(key, queryset, timeout=timeout)
+            return queryset
+
 
 class Symbol(BaseModel):
     class Meta:
