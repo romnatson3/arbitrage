@@ -6,7 +6,7 @@ from django.utils import timezone
 from django.utils.html import format_html
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth import get_user_model
-from django.db.models import QuerySet, Q
+from django.db.models import QuerySet
 from django.http import HttpResponse
 from io import StringIO
 from .forms import CustomUserCreationForm, CustomUserChangeForm
@@ -20,7 +20,6 @@ from .filters import (
     PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter,
     BillInstrumentFilter, BillSubTypeFilter
 )
-from binance_okx.trade import OkxTrade
 
 
 User = get_user_model()
@@ -74,13 +73,13 @@ class StatusLogAdmin(admin.ModelAdmin):
     @admin.display(description='Message')
     def colored_msg(self, obj):
         if obj.level in [logging.NOTSET, logging.INFO]:
-            color = 'green'
+            color = 'gray'
         elif obj.level in [logging.WARNING, logging.DEBUG]:
             color = 'orange'
         else:
             color = 'red'
         return format_html(
-            '<pre style="color:{color}; white-space: pre-wrap; font-family: monospace; ">{msg}</pre>',
+            '<pre style="color:{color}; white-space: pre-wrap; font-size: 1.02em;">{msg}</pre>',
             color=color,
             msg=obj.msg
         )
@@ -104,7 +103,7 @@ class StatusLogAdmin(admin.ModelAdmin):
 
     @admin.display(description='Created at', ordering='created_at')
     def create_datetime_format(self, obj):
-        return timezone.localtime(obj.created_at).strftime('%d-%m-%Y %T')
+        return timezone.localtime(obj.created_at).strftime('%d-%m-%Y %H:%M:%S.%f')
 
     # def has_delete_permission(self, request, obj=None):
     #     return False
@@ -203,8 +202,7 @@ class StrategyAdmin(admin.ModelAdmin):
         js = ('binance_okx/strategy.js',)
 
     list_display = (
-        'id', 'name', 'enabled', 'mode', 'position_size', 'target_profit', '_symbols',
-        'updated_at'
+        'id', 'name', 'enabled', 'mode', 'position_size', '_symbols', 'updated_at'
     )
     search_fields = ('name',)
     list_filter = ()
@@ -241,6 +239,7 @@ class StrategyAdmin(admin.ModelAdmin):
     autocomplete_fields = ('second_account', 'symbols')
     save_on_top = True
     form = StrategyForm
+    actions = ['toggle_enabled']
 
     def get_queryset(self, request) -> QuerySet:
         qs = super().get_queryset(request)
@@ -257,16 +256,22 @@ class StrategyAdmin(admin.ModelAdmin):
     def _symbols(self, obj) -> str:
         return ', '.join(obj.symbols.values_list('symbol', flat=True))
 
+    @admin.action(description='Toggle enabled/disabled')
+    def toggle_enabled(self, request, queryset):
+        for strategy in queryset:
+            strategy.enabled = not strategy.enabled
+            strategy.save()
+
 
 @admin.register(Position)
 class PositionAdmin(admin.ModelAdmin):
     list_display = (
         'id', 'is_open', 'strategy', '_position_side', 'mode', 'symbol', '_position_id',
-        '_trade_id', '_contract', '_amount', '_duration', 'created_at'
+        '_trade_ids', '_contract', '_amount', '_duration', 'updated_at'
     )
     fields = (
-        'id', 'is_open', 'strategy', 'symbol', 'mode', '_position_data', '_sl_tp_data',
-        '_ask_bid_data', 'updated_at', 'created_at'
+        'id', 'is_open', 'strategy', 'symbol', 'mode', 'account', '_trade_ids', '_position_data',
+        '_sl_tp_data', '_ask_bid_data', 'updated_at', 'created_at'
     )
     search_fields = ('strategy__name', 'symbol__symbol')
     list_display_links = ('id', 'strategy')
@@ -280,8 +285,8 @@ class PositionAdmin(admin.ModelAdmin):
     def get_queryset(self, request) -> QuerySet:
         qs = super().get_queryset(request)
         if request.user.is_superuser:
-            return qs
-        return qs.filter(strategy__created_by=request.user)
+            return qs.prefetch_related('executions')
+        return qs.prefetch_related('executions').filter(strategy__created_by=request.user)
 
     # def has_delete_permission(self, request, obj=None):
     #     return False
@@ -311,17 +316,25 @@ class PositionAdmin(admin.ModelAdmin):
     def _position_id(self, obj) -> str:
         return obj.position_data.get('posId', '')
 
-    @admin.display(description='Trade ID')
-    def _trade_id(self, obj) -> str:
-        return obj.position_data.get('tradeId', '')
+    @admin.display(description='Trade IDs')
+    def _trade_ids(self, obj) -> str:
+        if not obj.trade_ids:
+            return ''
+        return ', '.join(map(lambda x: str(x), obj.trade_ids))
 
     @admin.display(description='Contract size')
     def _contract(self, obj) -> str:
-        return round(float(obj.position_data.get('pos', 0)), 1)
+        pos = obj.position_data.get('pos')
+        if pos:
+            return round(float(pos), 1)
+        return 0
 
     @admin.display(description='USDT amount')
     def _amount(self, obj) -> str:
-        return round(obj.position_data.get('notionalUsd', 0), 2)
+        usdt = obj.position_data.get('notionalUsd')
+        if usdt:
+            return round(float(usdt), 2)
+        return 0
 
     @admin.display(description='Position side')
     def _position_side(self, obj) -> str:
@@ -352,31 +365,29 @@ class PositionAdmin(admin.ModelAdmin):
 
     @admin.action(description='Pull execution data manually')
     def manual_fill_execution(self, request, queryset):
-        tz = timezone.get_current_timezone()
         for position in queryset:
             position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
-            executions = Bill.objects.raw(
-                f'''SELECT bill_id, data
-                    FROM binance_okx_bill
-                    WHERE binance_okx_bill.account_id = {position.strategy.second_account.id} AND
-                          (binance_okx_bill.data ->> 'instId') = '{position.symbol.okx.inst_id}' AND
-                          to_timestamp((data->>'ts'), 'DD-MM-YYYY HH24:MI:SS.US') BETWEEN
-                          to_timestamp('{position.position_data["cTime"]}', 'DD-MM-YYYY HH24:MI:SS.US') AND
-                          to_timestamp('{position.updated_at.astimezone(tz):%d-%m-%Y %T.%f}', 'DD-MM-YYYY HH24:MI:SS.US');
-                ''')
-            logger.debug(executions.query.sql, extra=position.strategy._extra_log)
+            order_ids = Bill.objects.filter(data__tradeId__in=position.trade_ids).values_list('data__ordId', flat=True)
+            bills = Bill.objects.filter(data__ordId__in=order_ids).all()
+            executions = []
+            for bill in bills:
+                executions.append(
+                    Execution(
+                        bill_id=bill.bill_id, trade_id=bill.data['tradeId'],
+                        data=bill.data, position=position
+                    )
+                )
             logger.info(
-                f'Found {len(executions)} execution for position {position.id}',
+                f'Found {len(bills)} execution for position {position.id}',
                 extra=position.strategy._extra_log
             )
-            if executions:
+            if bills:
+                executions = Execution.objects.bulk_create(executions, ignore_conflicts=True)
                 self.message_user(
                     request,
                     f'Found {len(executions)} executions for position {position.id}',
                     level='WARNING'
                 )
-                for execution in executions:
-                    OkxTrade.save_execution(execution.data, position)
             else:
                 self.message_user(request, f'No executions found for position {position.id}', level='ERROR')
 
@@ -403,7 +414,7 @@ class PositionAdmin(admin.ModelAdmin):
         writer.writerow(headers)
         executions = (
             Execution.objects.filter(position__in=queryset)
-            .order_by('position__id', 'created_at').all()
+            .order_by('position__id', 'bill_id').all()
         )
         for execution in executions:
             ask_bid_data = Namespace(**execution.position.ask_bid_data)
@@ -518,18 +529,18 @@ class PositionAdmin(admin.ModelAdmin):
 @admin.register(Execution)
 class ExecutionAdmin(admin.ModelAdmin):
     list_display = (
-        'id', 'position', '_type', '_contract', '_amount', '_px', '_pnl', 'bill_id', 'trade_id',
-        'created_at'
+        'position', '_type', '_symbol', '_contract', '_amount', '_px', '_pnl',
+        'bill_id', 'trade_id', 'created_at'
     )
     fields = (
         'id', 'position', 'bill_id', 'trade_id', '_data', 'updated_at', 'created_at'
     )
-    list_display_links = ('id', 'position')
+    list_display_links = ('position',)
     search_fields = ('position__id',)
     list_filter = (
         'position__strategy', 'position__mode', 'position__is_open', 'position__id'
     )
-    ordering = ('-position', '-id')
+    ordering = ('-position', '-bill_id')
 
     def get_queryset(self, request) -> QuerySet:
         qs = super().get_queryset(request)
@@ -575,11 +586,21 @@ class ExecutionAdmin(admin.ModelAdmin):
     def _pnl(self, obj) -> str:
         return obj.data.get('pnl', '')
 
+    @admin.display(description='Symbol')
+    def _symbol(self, obj) -> str:
+        inst_id = obj.data.get('instId', '')
+        if inst_id:
+            symbol = ''.join(inst_id.split('-')[:-1])
+        else:
+            symbol = ''
+        return symbol
+
 
 @admin.register(Bill)
 class BillAdmin(admin.ModelAdmin):
     list_display = (
-        'account', 'bill_id', '_order_id', '_sub_type', '_contract', '_inst_id', '_datetime', 'updated_at'
+        'account', 'bill_id', '_symbol', '_order_id', '_trade_id', '_sub_type',
+        '_contract', '_inst_id', '_datetime', 'updated_at'
     )
     search_fields = ('bill_id',)
     list_filter = ('account', BillInstrumentFilter, BillSubTypeFilter)
@@ -620,3 +641,16 @@ class BillAdmin(admin.ModelAdmin):
     @admin.display(description='Order ID')
     def _order_id(self, obj) -> str:
         return obj.data.get('ordId', '')
+
+    @admin.display(description='Trade ID')
+    def _trade_id(self, obj) -> str:
+        return obj.data.get('tradeId', '')
+
+    @admin.display(description='Symbol')
+    def _symbol(self, obj) -> str:
+        inst_id = obj.data.get('instId', '')
+        if inst_id:
+            symbol = ''.join(inst_id.split('-')[:-1])
+        else:
+            symbol = ''
+        return symbol

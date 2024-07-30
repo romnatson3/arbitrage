@@ -1,5 +1,6 @@
 import logging
 import websocket
+from typing import Any
 from websocket._exceptions import (
     WebSocketConnectionClosedException, WebSocketException, WebSocketPayloadException
 )
@@ -288,90 +289,6 @@ class WebSocketBinaceAskBid(WebSocketOkxAskBid):
             raise
 
 
-class WebSocketOkxOrders(WebSocketOkxAskBid):
-    def __init__(self, account: Account) -> None:
-        super().__init__()
-        self.account = account
-        production_url = 'wss://ws.okx.com:8443/ws/v5/private'
-        demo_trading_url = 'wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999'
-        self.url = demo_trading_url if account.testnet else production_url
-        self._threads = {
-            f'run_forever_okx_orders_{account.id}': None,
-            f'ping_okx_orders_{account.id}': None
-        }
-
-    def _get_login_subscribe(self) -> dict:
-        ts = str(int(time.time()))
-        sign = ts + 'GET' + '/users/self/verify'
-        mac = hmac.new(
-            bytes(self.account.api_secret, encoding='utf8'),
-            bytes(sign, encoding='utf-8'),
-            digestmod='sha256'
-        )
-        sign = base64.b64encode(mac.digest()).decode(encoding='utf-8')
-        login = {
-            'op': 'login',
-            'args': [{
-                'apiKey': self.account.api_key,
-                'passphrase': self.account.api_passphrase,
-                'timestamp': ts,
-                'sign': sign
-            }]
-        }
-        return login
-
-    def _login(self):
-        self.ws.send(json.dumps(self._get_login_subscribe()))
-
-    def _subscribe_orders(self):
-        self.ws.send(json.dumps(
-            {
-                'op': 'subscribe',
-                'args': [{
-                    'channel': 'orders',
-                    'instType': 'SWAP'
-                }]
-            }
-        ))
-        logger.info('Subscribed to orders')
-
-    def _message_handler(self, message: str) -> None | dict:
-        if message == 'pong':
-            logger.debug(f'{self.__class__.__name__} pong received')
-            return
-        try:
-            message = json.loads(message)
-        except json.decoder.JSONDecodeError:
-            return
-        event = message.get('event')
-        data = message.get('data')
-        if event == 'error':
-            logger.error(message)
-        elif event == 'subscribe':
-            logger.info(f'Subscribe {message}')
-        elif event == 'login':
-            logger.info(f'Logged in to account: {self.account.name}')
-            self._subscribe_orders()
-        elif data:
-            data = data[0]
-            data['account_id'] = self.account.id
-            return data
-
-    def init(self):
-        self._connect()
-        self._login()
-
-    def launch(self):
-        run_forever_thread = threading.Thread(
-            target=self.run_forever, daemon=True, name=f'run_forever_okx_orders_{self.account.id}')
-        run_forever_thread.start()
-        self._threads[run_forever_thread.name] = run_forever_thread
-        ping_thread = threading.Thread(target=self.ping, daemon=True, name=f'ping_okx_orders_{self.account.id}')
-        ping_thread.start()
-        self._threads[ping_thread.name] = ping_thread
-        logger.info(f'WebSocketOkxOrders for {self.account.name} is started')
-
-
 class WebSocketOkxMarketPrice(WebSocketOkxAskBid):
     def __init__(self) -> None:
         super().__init__()
@@ -432,3 +349,138 @@ class WebSocketOkxMarketPrice(WebSocketOkxAskBid):
                     return
             self.previous_market_price[data['instId']] = data['markPx']
             return {k: v for k, v in data.items() if k in ['instId', 'markPx', 'ts']}
+
+
+class WebSocketOkxOrders(WebSocketOkxAskBid):
+    def __init__(self, account: Account) -> None:
+        super().__init__()
+        self.account = account
+        production_url = 'wss://ws.okx.com:8443/ws/v5/private'
+        demo_trading_url = 'wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999'
+        self.url = demo_trading_url if account.testnet else production_url
+        self._threads = {
+            f'run_forever_okx_orders_{account.id}': None,
+            f'ping_okx_orders_{account.id}': None
+        }
+
+    def _get_login_subscribe(self) -> dict:
+        ts = str(int(time.time()))
+        sign = ts + 'GET' + '/users/self/verify'
+        mac = hmac.new(
+            bytes(self.account.api_secret, encoding='utf8'),
+            bytes(sign, encoding='utf-8'),
+            digestmod='sha256'
+        )
+        sign = base64.b64encode(mac.digest()).decode(encoding='utf-8')
+        login = {
+            'op': 'login',
+            'args': [{
+                'apiKey': self.account.api_key,
+                'passphrase': self.account.api_passphrase,
+                'timestamp': ts,
+                'sign': sign
+            }]
+        }
+        return login
+
+    def _login(self):
+        self.ws.send(json.dumps(self._get_login_subscribe()))
+
+    def _subscribe(self):
+        self.ws.send(json.dumps(
+            {
+                'op': 'subscribe',
+                'args': [{
+                    'channel': 'orders',
+                    'instType': 'SWAP'
+                }]
+            }
+        ))
+        logger.info('Subscribed to orders')
+
+    def _message_handler(self, message: str) -> None | dict:
+        if message == 'pong':
+            logger.debug(f'{self.__class__.__name__} pong received')
+            return
+        try:
+            message = json.loads(message)
+        except json.decoder.JSONDecodeError:
+            return
+        event = message.get('event')
+        data = message.get('data')
+        if event == 'error':
+            logger.error(message)
+        elif event == 'subscribe':
+            logger.info(f'Subscribe {message}')
+        elif event == 'login':
+            logger.info(f'Logged in to account: {self.account.name}')
+            self._subscribe()
+        elif data:
+            data = data[0]
+            data['account_id'] = self.account.id
+            return data
+
+    def init(self):
+        self._connect()
+        self._login()
+
+    def launch(self):
+        names = list(self._threads.keys())
+        run_forever_thread = threading.Thread(
+            target=self.run_forever, daemon=True, name=names[0])
+        run_forever_thread.start()
+        self._threads[run_forever_thread.name] = run_forever_thread
+        ping_thread = threading.Thread(target=self.ping, daemon=True, name=names[1])
+        ping_thread.start()
+        self._threads[ping_thread.name] = ping_thread
+        logger.info(f'{self.__class__.__name__} for {self.account.name} is started')
+
+
+class WebSocketOkxPositions(WebSocketOkxOrders):
+    def __init__(self, account: Account) -> None:
+        super().__init__(account)
+        self._threads = {
+            f'run_forever_okx_positions_{account.id}': None,
+            f'ping_okx_positions_{account.id}': None
+        }
+        self.previous_positions: dict[str, dict[str, Any]] = {}
+
+    def _subscribe(self):
+        self.ws.send(json.dumps(
+            {
+                'op': 'subscribe',
+                'args': [{
+                    'channel': 'positions',
+                    'instType': 'SWAP'
+                }]
+            }
+        ))
+        logger.info('Subscribed to positions')
+
+    def _message_handler(self, message: str) -> None | dict:
+        if message == 'pong':
+            logger.debug(f'{self.__class__.__name__} pong received')
+            return
+        try:
+            message = json.loads(message)
+        except json.decoder.JSONDecodeError:
+            return
+        event = message.get('event')
+        data = message.get('data')
+        if event == 'error':
+            logger.error(message)
+        elif event == 'subscribe':
+            logger.info(f'Subscribe {message}')
+        elif event == 'login':
+            logger.info(f'Logged in to account: {self.account.name}')
+            self._subscribe()
+        elif data:
+            data = data[0]
+            data['account_id'] = self.account.id
+            key = f'{self.account.id}_{data["instId"]}'
+            previous_position = self.previous_positions.get(key)
+            if previous_position:
+                if previous_position['pos'] == data['pos'] and previous_position['cTime'] == data['cTime']:
+                    return
+            self.previous_positions[key] = data
+            return data

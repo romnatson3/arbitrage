@@ -1,15 +1,12 @@
 import logging
-import time
 import uuid
-from typing import Any
 from django.utils import timezone
-from django.conf import settings
 import okx.Trade as Trade
 import okx.Account as Account
 from .models import Strategy, Symbol, OkxSymbol, Execution, Position
 from .exceptions import (
     PlaceOrderException, GetPositionException, GetOrderException,
-    CancelOrderException, ClosePositionException, GetExecutionException
+    CancelOrderException, ClosePositionException
 )
 from .misc import convert_dict_values
 from .helper import calc
@@ -32,30 +29,6 @@ class OkxTrade():
         self.trade = Trade.TradeAPI(apikey, secretkey, passphrase, flag=flag, debug=debug)
         self.account = Account.AccountAPI(apikey, secretkey, passphrase, flag=flag, debug=debug)
 
-    def open_position(
-        self,
-        position_size: float = None,
-        symbol: OkxSymbol = None,
-        position_side: str = None
-    ) -> Position:
-        if not symbol:
-            symbol = self.symbol_okx
-        if not position_size:
-            position_size = self.strategy.position_size
-        if not position_side:
-            position_side = self.position_side
-        order_id = self.place_order(position_size, symbol, position_side)
-        logger.warning(
-            f'Opened {position_side} position, {position_size=}, {order_id=}',
-            extra=self.strategy.extra_log
-        )
-        position: dict = self.get_position()
-        position: Position = self.save_position(position)
-        executions: list[dict] = self.get_executions_by_order_id(order_id)
-        for execution in executions:
-            OkxTrade.save_execution(execution, position)
-        return position
-
     def place_order(self, position_size: float, symbol: OkxSymbol, position_side: str) -> str:
         sz = calc.get_sz(position_size, symbol)
         if position_side == 'long':
@@ -71,10 +44,25 @@ class OkxTrade():
             sz=sz
         )
         if result['code'] != '0':
-            raise PlaceOrderException(result)
+            raise PlaceOrderException(
+                f'Failed to place order. {result}. {sz=}, {position_side=}, {symbol.market_price=}'
+            )
         order_id = result['data'][0]['ordId']
         logger.info(f'Placed order {sz=} {order_id=}', extra=self.strategy.extra_log)
         return order_id
+
+    def open_position(self, position_size: float = None, symbol: OkxSymbol = None, position_side: str = None) -> None:
+        if not symbol:
+            symbol = self.symbol_okx
+        if not position_size:
+            position_size = self.strategy.position_size
+        if not position_side:
+            position_side = self.position_side
+        order_id = self.place_order(position_size, symbol, position_side)
+        logger.warning(
+            f'Opened {position_side} position, {position_size=} usdt, {order_id=}',
+            extra=self.strategy.extra_log
+        )
 
     def increase_position(self):
         symbol = self.symbol_okx
@@ -82,65 +70,26 @@ class OkxTrade():
         position_side = self.position_side
         order_id = self.place_order(position_size, symbol, position_side)
         logger.warning(
-            f'Increased {position_side} position, {position_size=}, {order_id=}',
+            f'Increased {position_side} position, {position_size=} usdt, {order_id=}',
             extra=self.strategy.extra_log
         )
 
-    def save_position(self, data: dict) -> Position:
-        position = Position.objects.filter(
-            position_data__posId=data['posId'], strategy=self.strategy,
-            symbol=self.symbol, is_open=True
-        ).last()
-        if position:
-            self.strategy._extra_log.update(position=position.id)
-            logger.warning('Position already exists', extra=self.strategy.extra_log)
-            position.position_data = data
-            position.save()
-            logger.debug('Updated position', extra=self.strategy.extra_log)
-            return position
-        position = Position.objects.create(position_data=data, strategy=self.strategy, symbol=self.symbol)
-        self.strategy._extra_log.update(position=position.id)
-        logger.info('Saved position', extra=self.strategy.extra_log)
-        return position
-
-    def get_executions_by_order_id(self, order_id: int) -> list[dict[str, Any]]:
-        if not isinstance(order_id, int):
-            order_id = int(order_id)
-        end_time = time.time() + settings.RECEIVE_TIMEOUT
-        while time.time() < end_time:
-            logger.debug(f'Trying to get executions for {order_id=}', extra=self.strategy.extra_log)
-            result = list(
-                self.strategy.second_account.bills
-                .filter(data__ordId=order_id).values_list('data', flat=True)
-            )
-            if result:
+    def get_position(self, symbol: OkxSymbol = None) -> dict:
+        if not symbol:
+            symbol = self.symbol_okx
+        result = self.account.get_positions(instId=symbol.inst_id, instType='SWAP')
+        if result['code'] != '0':
+            raise GetPositionException(f'Failed to get position data. {result}')
+        if result['data']:
+            data = convert_dict_values(result['data'][0])
+            if data['pos']:
                 logger.info(
-                    f'Got {len(result)} executions for {order_id=}',
+                    f'Got position data: side={data["posSide"]}, sz={data["pos"]}, '
+                    f'notionalUsd={data["notionalUsd"]}, avgPx={data["avgPx"]}',
                     extra=self.strategy.extra_log
                 )
-                return result
-            time.sleep(2)
-        raise GetExecutionException(
-            f'Not found any executions for {order_id=}. Timeout {settings.RECEIVE_TIMEOUT}s reached'
-        )
-
-    @staticmethod
-    def save_execution(data: dict, position: Position) -> None:
-        execution, created = Execution.objects.get_or_create(
-            bill_id=data['billId'], trade_id=data['tradeId'],
-            defaults={'data': data, 'position': position}
-        )
-        if created:
-            logger.info(
-                f'Saved execution bill_id={data["billId"]}, trade_id={data["tradeId"]}, '
-                f'subType={data["subType"]}, sz={data["sz"]}, px={data["px"]}, ordId={data["ordId"]}',
-                extra=position.strategy.extra_log
-            )
-        else:
-            logger.warning(
-                f'Execution bill_id={data["billId"]}, trade_id={data["tradeId"]} already exists',
-                extra=position.strategy.extra_log
-            )
+                return data
+        raise GetPositionException('Failed to get position data')
 
     def close_position(self, size_usdt: float, symbol: OkxSymbol = None, position_side: str = None) -> None:
         if not symbol:
@@ -169,11 +118,6 @@ class OkxTrade():
         )
 
     def close_entire_position(self, symbol: OkxSymbol = None, position_side: str = None) -> None:
-        try:
-            self.get_position(symbol=symbol, wait=0)
-        except GetPositionException:
-            logger.warning('No position to close', extra=self.strategy.extra_log)
-            return
         if not symbol:
             symbol = self.symbol_okx
         if not position_side:
@@ -190,31 +134,6 @@ class OkxTrade():
             raise ClosePositionException(f'Failed to close {position_side} position. {result}')
         else:
             logger.warning(f'Closed {position_side} position', extra=self.strategy.extra_log)
-
-    def get_position(self, symbol: OkxSymbol = None, wait: int = 10) -> dict:
-        if not symbol:
-            symbol = self.symbol_okx
-        if wait <= 0:
-            wait = 1
-        end_time = time.time() + wait
-        while time.time() < end_time:
-            logger.debug('Trying to get position data', extra=self.strategy.extra_log)
-            result = self.account.get_positions(instId=symbol.inst_id, instType='SWAP')
-            if result['code'] != '0':
-                raise GetPositionException(f'Failed to get position data. {result}')
-            if not result['data']:
-                time.sleep(1)
-                continue
-            data = convert_dict_values(result['data'][0])
-            if data['pos']:
-                logger.info(
-                    f'Got position data: side={data["posSide"]}, sz={data["pos"]}, '
-                    f'notionalUsd={data["notionalUsd"]}, avgPx={data["avgPx"]}',
-                    extra=self.strategy.extra_log
-                )
-                return data
-            time.sleep(1)
-        raise GetPositionException(f'Failed to get position data. Timeout {wait}s reached')
 
     def place_stop_loss(
         self,
@@ -249,9 +168,11 @@ class OkxTrade():
             parameters.pop('sz')
         result = self.trade.place_algo_order(**parameters)
         if result['code'] != '0':
-            raise PlaceOrderException(result)
+            raise PlaceOrderException(
+                f'Failed to place stop loss. {result}. {price=}, {sz=}, {symbol.market_price=}'
+            )
         order_id = result['data'][0]['algoId']
-        logger.info(f'Placed stop loss {price=} {sz=} {order_id=}', extra=self.strategy.extra_log)
+        logger.info(f'Placed stop_loss_price={price}, {sz=}, {symbol.market_price=}, {order_id=}', extra=self.strategy.extra_log)
         return order_id
 
     def place_take_profit(self, price: float, symbol: OkxSymbol = None, position_side: str = None) -> str:
@@ -275,9 +196,11 @@ class OkxTrade():
             tpTriggerPxType='mark'
         )
         if result['code'] != '0':
-            raise PlaceOrderException(result)
+            raise PlaceOrderException(
+                f'Failed to place take profit. {result}. {price=}, {symbol.market_price=}'
+            )
         order_id = result['data'][0]['algoId']
-        logger.info(f'Placed take profit {price} {order_id=}', extra=self.strategy.extra_log)
+        logger.info(f'Placed take profit {price=} {order_id=}', extra=self.strategy.extra_log)
         return order_id
 
     def place_stop_loss_and_take_profit(
@@ -343,7 +266,9 @@ class OkxTrade():
             px=price
         )
         if result['code'] != '0':
-            raise PlaceOrderException(result)
+            raise PlaceOrderException(
+                f'Failed to place limit order. {result}. {sz=}, {price=}, {position_side=}, {symbol.market_price=}'
+            )
         order_id = result['data'][0]['ordId']
         logger.info(f'Placed limit order {sz=} {price=} {order_id=}', extra=self.strategy.extra_log)
         return order_id
@@ -393,7 +318,7 @@ class OkxTrade():
         symbol: OkxSymbol = None,
         position_side: str = None,
         sz: int = None
-    ) -> None:
+    ) -> str:
         if not symbol:
             symbol = self.symbol_okx
         if not position_side:
@@ -401,7 +326,7 @@ class OkxTrade():
         algo_id = self.get_algo_order_id()
         if not algo_id:
             algo_id = self.place_stop_loss(price, symbol, position_side, sz)
-            return
+            return algo_id
         parameters = dict(
             instId=symbol.inst_id,
             algoId=algo_id,
@@ -414,8 +339,12 @@ class OkxTrade():
             parameters.pop('newSz')
         result = self.trade.amend_algo_order(**parameters)
         if result['code'] != '0':
-            raise PlaceOrderException(result)
-        logger.info(f'Updated stop loss {price=} {sz=}', extra=self.strategy.extra_log)
+            raise PlaceOrderException(
+                f'Failed to update stop loss. {result}. {price=}, {sz=}, {symbol.market_price=}'
+            )
+        logger.info(f'Updated stop_loss_price={price} {sz=}', extra=self.strategy.extra_log)
+        order_id = result['data'][0]['algoId']
+        return order_id
 
     def update_take_profit(self, price: float, symbol: OkxSymbol = None, position_side: str = None) -> None:
         if not symbol:
@@ -434,7 +363,9 @@ class OkxTrade():
             newTpTriggerPxType='mark'
         )
         if result['code'] != '0':
-            raise PlaceOrderException(result)
+            raise PlaceOrderException(
+                f'Failed to update take profit. {result}. {price=}, {symbol.market_price=}'
+            )
         logger.info(f'Updated take profit {price=}', extra=self.strategy.extra_log)
 
 
@@ -459,7 +390,7 @@ class OkxEmulateTrade():
         )
         position = Position.objects.create(
             strategy=self.strategy, symbol=self.symbol, mode=Strategy.Mode.emulate,
-            position_data=position_data
+            position_data=position_data, account=self.strategy.second_account
         )
         self.strategy._extra_log.update(position=position.id)
         logger.info('Created virtual position', extra=self.strategy.extra_log)

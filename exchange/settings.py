@@ -131,8 +131,8 @@ AUTH_PASSWORD_VALIDATORS = [
 LANGUAGE_CODE = 'en-us'
 # LANGUAGE_CODE = 'uk-ua'
 
-# TIME_ZONE = 'UTC'
-TIME_ZONE = 'Europe/Kiev'
+TIME_ZONE = 'UTC'
+# TIME_ZONE = 'Europe/Kiev'
 
 USE_I18N = True
 

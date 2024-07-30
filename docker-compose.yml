@@ -104,11 +104,12 @@ services:
       - redis
       - postgres
       - default
-      - open_position
-      - watch_position
+      - positions
+      - check_position_at_market_price
       - check_condition
       - websocket_okx_orders
       - websocket_okx_ask_bid
+      - websocket_okx_positions
       - websocket_binance_ask_bid
     env_file:
       - .env
@@ -164,9 +165,9 @@ services:
         tag: exchange_check_condition
         syslog-facility: local5
 
-  open_position:
+  positions:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 15 -l INFO -Q open_position
+    entrypoint: celery -A exchange worker -c 15 -l INFO -Q positions
     deploy:
       mode: replicated
       replicas: 1
@@ -183,12 +184,12 @@ services:
     logging:
       driver: syslog
       options:
-        tag: exchange_open_position
+        tag: exchange_positions
         syslog-facility: local5
 
-  watch_position:
+  check_position_at_market_price:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 15 -l INFO -Q watch_position
+    entrypoint: celery -A exchange worker -c 15 -l INFO -Q check_position_at_market_price 
     deploy:
       mode: replicated
       replicas: 1
@@ -205,7 +206,7 @@ services:
     logging:
       driver: syslog
       options:
-        tag: exchange_watch_position
+        tag: exchange_check_position_at_market_price
         syslog-facility: local5
 
   websocket_okx_orders:
@@ -296,4 +297,26 @@ services:
       driver: syslog
       options:
         tag: exchange_websocket_okx_market_price
+        syslog-facility: local5
+
+  websocket_okx_positions:
+    image: exchange:latest
+    entrypoint: celery -A exchange worker -c 1 -l INFO -Q websocket_okx_positions
+    deploy:
+      mode: replicated
+      replicas: 1
+    restart: always
+    depends_on:
+      - rabbitmq
+      - redis
+      - postgres
+      - web
+    env_file:
+      - .env
+    networks:
+      - layer
+    logging:
+      driver: syslog
+      options:
+        tag: exchange_websocket_okx_positions
         syslog-facility: local5

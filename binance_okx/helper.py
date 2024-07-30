@@ -1,10 +1,14 @@
 import logging
 from math import floor
 import json
+from typing import Optional, Any
+import okx.Account
 from django_redis import get_redis_connection
 from django.core.cache import cache
 from .exceptions import AcquireLockException
-from .models import OkxSymbol, Strategy, Symbol
+from .models import OkxSymbol, Strategy, Symbol, Account, Execution
+from .misc import convert_dict_values
+from .exceptions import GetBillsException
 
 
 logger = logging.getLogger(__name__)
@@ -16,7 +20,8 @@ class Calculator():
         if contract_count < symbol.lot_sz:
             return symbol.lot_sz
         sz = floor(contract_count / symbol.lot_sz) * symbol.lot_sz
-        return round(sz, 1)
+        # return round(sz, 1)
+        return sz
 
     def get_base_coin_from_sz(self, sz: float, contract_value: float) -> float:
         base_coin = sz * contract_value
@@ -56,7 +61,7 @@ class TaskLock():
         self.key = key
 
     def acquire(self) -> bool:
-        return cache.add(self.key, 1, timeout=60)
+        return cache.add(self.key, 1, timeout=15)
 
     def release(self) -> None:
         cache.delete(self.key)
@@ -68,22 +73,6 @@ class TaskLock():
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.release()
-
-
-class SavedOkxOrderId():
-    def __init__(self, account_id: int, inst_id: str) -> None:
-        self.key = f'okx_orders_{inst_id}_{account_id}'
-        self.conection = get_redis_connection('default')
-        self.pipeline = self.conection.pipeline()
-
-    def add(self, order_id: str) -> bool:
-        self.pipeline.execute_command('lpush', self.key, order_id)
-        self.pipeline.execute_command('ltrim', self.key, 0, 100)
-        result = self.pipeline.execute()
-        return all(result)
-
-    def get_orders(self) -> set[str]:
-        return {i.decode() for i in self.conection.lrange(self.key, 0, -1)}
 
 
 def check_all_conditions(strategy: Strategy, symbol: Symbol) -> tuple[bool, str, dict]:
@@ -235,9 +224,7 @@ def check_second_condition(
         return False, {}
 
 
-def calculation_delta_and_points_for_entry(
-    symbol: Symbol, position_side: str, previous_prices: dict
-) -> dict:
+def calculation_delta_and_points_for_entry(symbol: Symbol, position_side: str, previous_prices: dict) -> dict:
     conection = get_redis_connection('default')
     last_prices = conection.zrange(f'binance_okx_ask_bid_{symbol.symbol}', -1, -1)[0]
     last_prices = json.loads(last_prices)
@@ -278,3 +265,24 @@ def calculation_delta_and_points_for_entry(
         spread_points=spread_points, spread_percent=spread_percent,
         delta_points=delta_points, delta_percent=delta_percent,
     )
+
+
+def get_bills(account: Account, bill_id: Optional[int] = None) -> list[dict[str, Any]]:
+    client = okx.Account.AccountAPI(
+        account.api_key, account.api_secret, account.api_passphrase,
+        flag='1' if account.testnet else '0',
+        debug=False
+    )
+    if not bill_id:
+        result = client.get_account_bills(instType='SWAP', mgnMode='isolated', type=2)
+    else:
+        result = client.get_account_bills(
+            instType='SWAP', mgnMode='isolated', type=2,
+            before=bill_id
+        )
+    if result['code'] != '0':
+        raise GetBillsException(result)
+    bills = list(map(convert_dict_values, result['data']))
+    for i in bills:
+        i['subType'] = Execution.sub_type.get(i['subType'], i['subType'])
+    return bills

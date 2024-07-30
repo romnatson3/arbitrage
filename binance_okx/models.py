@@ -188,8 +188,8 @@ class StrategyManager(models.Manager):
         return (
             super().get_queryset()
             .select_related('first_account', 'second_account', 'created_by')
-            .prefetch_related('symbols')
-            # .prefetch_related('symbols', 'positions')
+            # .prefetch_related('symbols')
+            .prefetch_related('symbols', 'positions')
         )
 
     def cache(self, **kwargs) -> QuerySet:
@@ -281,6 +281,12 @@ class Strategy(BaseModel):
             symbol=None,
             position=None
         )
+
+    def get_last_trade_open_position(self, symbol: str) -> QuerySet:
+        return self.positions.filter(mode=Strategy.Mode.trade, is_open=True, symbol__symbol=symbol).order_by('-id').first()
+
+    def get_last_emulate_open_position(self, symbol: str) -> QuerySet:
+        return self.positions.filter(mode=Strategy.Mode.emulate, is_open=True, symbol__symbol=symbol).order_by('-id').first()
 
     @property
     def open_fee(self) -> float:
@@ -413,7 +419,6 @@ class PositionManager(models.Manager):
         return (
             super().get_queryset()
             .select_related('symbol', 'strategy')
-            .prefetch_related('executions')
         )
 
     def create(self, *args, **kwargs):
@@ -445,8 +450,9 @@ class Position(BaseModel):
     def get_sl_tp_empty_data() -> dict:
         data = {
             'stop_loss_price': None,
+            'stop_loss_order_id': None,
             'stop_loss_breakeven': None,
-            'stop_loss_breakeven_set': None,
+            'stop_loss_breakeven_order_id': None,
             'take_profit_price': None,
             'tp_first_price': None,
             'tp_first_part': None,
@@ -570,6 +576,8 @@ class Position(BaseModel):
     strategy = models.ForeignKey(Strategy, on_delete=models.PROTECT, related_name='positions', blank=True, null=True)
     is_open = models.BooleanField('Is open', default=True)
     mode = models.CharField('Mode', max_length=20, default=Strategy.Mode.trade)
+    account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='positions', help_text='OKX account', blank=True, null=True)
+    trade_ids = models.JSONField('Trade IDs', default=list)
 
     @property
     def side(self) -> str:
