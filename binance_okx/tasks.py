@@ -251,7 +251,7 @@ def check_position_close_time(strategy_id: int, symbol: str) -> None:
                     strategy._extra_log.update(symbol=symbol.symbol, position=position.id)
                     if time_close_position(strategy, position):
                         trade = OkxEmulateTrade(strategy, position.symbol)
-                        trade.close_position(position, strategy.position_size)
+                        trade.close_position(position, strategy.position_size, completely=True)
     except AcquireLockException:
         logger.debug('Task check_position_close_time is already running', extra=strategy.extra_log)
     except Exception as e:

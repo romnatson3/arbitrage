@@ -305,18 +305,20 @@ def check_emulate_position_at_market_price(strategy_id: int, symbol: str, market
                         position.save(update_fields=['sl_tp_data'])
                         logger.info('First part of position is closed', extra=strategy.extra_log)
                         return
-                else:
+                elif not sl_tp_data.second_part_closed:
                     if ((position.side == 'long' and market_price >= sl_tp_data.tp_second_price) or
                         (position.side == 'short' and market_price <= sl_tp_data.tp_second_price)):
                         logger.info(
                             f'Second take profit price {sl_tp_data.tp_second_price} reached {market_price=}',
                             extra=strategy.extra_log
                         )
-                        trade.close_position(position, sl_tp_data.tp_second_part)
+                        trade.close_position(position, sl_tp_data.tp_second_part, completely=True)
                         position.sl_tp_data['second_part_closed'] = True
                         position.save(update_fields=['sl_tp_data'])
                         logger.info('Second part of position is closed', extra=strategy.extra_log)
                         return
+                else:
+                    logger.warning('All parts of position are closed', extra=strategy.extra_log)
             else:
                 if strategy.target_profit:
                     if ((position.side == 'long' and market_price >= sl_tp_data.take_profit_price) or

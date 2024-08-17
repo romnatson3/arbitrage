@@ -1,5 +1,6 @@
 import logging
-import uuid
+import random
+import time
 from django.utils import timezone
 import okx.Trade as Trade
 import okx.Account as Account
@@ -397,9 +398,31 @@ class OkxEmulateTrade():
         self._create_open_execution(position)
         return position
 
-    def close_position(self, position: Position, size_usdt: float) -> None:
-        sz = calc.get_sz(size_usdt, self.symbol.okx)
-        if sz >= position.position_data['pos']:
+    def _create_open_execution(self, position: Position) -> None:
+        execution_data = Execution.get_empty_data()
+        execution_data.update(
+            subType='Open long' if position.side == 'long' else 'Open short',
+            sz=position.position_data['pos'],
+            px=position.position_data['avgPx'],
+            ts=timezone.localtime().strftime('%d-%m-%Y %H:%M:%S.%f'),
+            fee=round(self.strategy.position_size * self.strategy.open_fee / 100, 10),
+            pnl=None
+        )
+        Execution.objects.create(
+            position=position,
+            trade_id=str(random.randint(500000000, 999999999)),
+            bill_id=str(int(time.time() * 10000000)),
+            data=execution_data
+        )
+        logger.info(
+            f'Created virtual {execution_data["subType"]} execution, '
+            f'sz={execution_data["sz"]}, px={execution_data["px"]}, '
+            f'fee={execution_data["fee"]}',
+            extra=self.strategy.extra_log
+        )
+
+    def close_position(self, position: Position, size_usdt: float, completely: bool = False) -> None:
+        if completely:
             sz = position.position_data['pos']
             base_coin = calc.get_base_coin_from_sz(sz, self.symbol.okx.ct_val)
             size_usdt = base_coin * self.symbol.okx.market_price
@@ -414,30 +437,10 @@ class OkxEmulateTrade():
                 f'Virtual position is closed partially {size_usdt=}',
                 extra=self.strategy.extra_log
             )
+            sz = calc.get_sz(size_usdt, self.symbol.okx)
             position.position_data['pos'] -= sz
             position.save(update_fields=['position_data'])
         self._create_close_execution(position, size_usdt)
-
-    def _create_open_execution(self, position: Position) -> None:
-        execution_data = Execution.get_empty_data()
-        execution_data.update(
-            subType='Open long' if position.side == 'long' else 'Open short',
-            sz=position.position_data['pos'],
-            px=position.position_data['avgPx'],
-            ts=timezone.localtime().strftime('%d-%m-%Y %H:%M:%S.%f'),
-            fee=round(self.strategy.position_size * self.strategy.open_fee / 100, 10),
-            pnl=None
-        )
-        Execution.objects.create(
-            position=position, trade_id=str(uuid.uuid4()).split('-')[-1],
-            bill_id=str(uuid.uuid4()).split('-')[-1], data=execution_data
-        )
-        logger.info(
-            f'Created virtual {execution_data["subType"]} execution, '
-            f'sz={execution_data["sz"]}, px={execution_data["px"]}, '
-            f'fee={execution_data["fee"]}',
-            extra=self.strategy.extra_log
-        )
 
     def _create_close_execution(self, position: Position, size_usdt: float) -> None:
         sub_type = 'Open long' if position.side == 'long' else 'Open short'
@@ -448,10 +451,10 @@ class OkxEmulateTrade():
         base_coin = calc.get_base_coin_from_sz(sz, self.symbol.okx.ct_val)
         close_price = self.symbol.okx.market_price
         close_fee = round(size_usdt * self.strategy.close_fee / 100, 10)
-        pnl = round(
-            (close_price - open_price) * base_coin - (open_fee + close_fee),
-            10
-        )
+        if position.side == 'long':
+            pnl = round((close_price - open_price) * base_coin - (open_fee + close_fee), 10)
+        elif position.side == 'short':
+            pnl = round((open_price - close_price) * base_coin - (open_fee + close_fee), 10)
         execution_data = Execution.get_empty_data()
         execution_data.update(
             subType='Close long' if position.side == 'long' else 'Close short',
@@ -462,8 +465,10 @@ class OkxEmulateTrade():
             pnl=pnl
         )
         Execution.objects.create(
-            position=position, trade_id=str(uuid.uuid4()).split('-')[-1],
-            bill_id=str(uuid.uuid4()).split('-')[-1], data=execution_data
+            position=position,
+            trade_id=str(random.randint(500000000, 999999999)),
+            bill_id=str(int(time.time() * 10000000)),
+            data=execution_data
         )
         logger.info(
             f'Created virtual {execution_data["subType"]} execution, '

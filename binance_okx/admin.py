@@ -415,6 +415,7 @@ class PositionAdmin(admin.ModelAdmin):
         executions = (
             Execution.objects.filter(position__in=queryset)
             .order_by('position__id', 'bill_id').all()
+            # .order_by('position__id', '-data__subType', 'data__ts').all()
         )
         for execution in executions:
             ask_bid_data = Namespace(**execution.position.ask_bid_data)
