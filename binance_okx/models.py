@@ -584,6 +584,14 @@ class Position(BaseModel):
         return self.position_data['posSide']
 
     @property
+    def size_usdt(self) -> float:
+        return self.position_data['notionalUsd']
+
+    @property
+    def sz(self) -> float:
+        return self.position_data['pos']
+
+    @property
     def entry_price(self) -> float:
         return self.position_data['avgPx']
 

@@ -5,7 +5,7 @@ from types import SimpleNamespace as Namespace
 from .models import Strategy, Symbol, Position
 from .helper import calc
 from .trade import OkxTrade, OkxEmulateTrade, get_take_profit_grid, get_stop_loss_breakeven
-from .helper import calculation_delta_and_points_for_entry, TaskLock
+from .helper import calculation_delta_and_points_for_entry, TaskLock, calc
 from .exceptions import PlaceOrderException
 
 
@@ -24,13 +24,13 @@ def check_funding_time(strategy: Strategy, symbol: Symbol, position_side: str) -
             funding_rate = symbol.okx.funding_rate
             if (funding_rate > 0 and position_side == 'long') or (funding_rate < 0 and position_side == 'short'):
                 logger.warning(
-                    f'Funding rate {funding_rate:.5f} is unfavorable for the current position. Skip',
+                    f'Funding rate {funding_rate:.5f} is unfavorable for the current position. Position will not open',
                     extra=strategy.extra_log
                 )
                 return False
             else:
                 logger.warning(
-                    f'Funding rate {funding_rate:.5f} is favorable for the {position_side} position. Open',
+                    f'Funding rate {funding_rate:.5f} is favorable for the {position_side} position. Position will open',
                     extra=strategy.extra_log
                 )
     return True
@@ -43,14 +43,15 @@ def time_close_position(strategy: Strategy, position: Position) -> bool:
             position.position_data['cTime'], '%d-%m-%Y %H:%M:%S.%f').astimezone(tz)
         close_time = open_time + timezone.timedelta(seconds=strategy.time_to_close)
         seconds_to_close = (close_time - timezone.localtime()).total_seconds()
-        logger.debug(
-            f'Time to close {round(seconds_to_close//60)} minutes {round(seconds_to_close%60)} seconds',
-            extra=strategy.extra_log
-        )
-        if seconds_to_close <= 0:
+        if seconds_to_close > 0:
+            logger.debug(
+                f'Time to close {round(seconds_to_close//60)} minutes {round(seconds_to_close%60)} seconds',
+                extra=strategy.extra_log
+            )
+            return False
+        else:
             logger.warning(f'Close time {close_time} reached', extra=strategy.extra_log)
             return True
-    return False
 
 
 def fill_position_data(strategy: Strategy, position: Position, prices: dict, prices_entry: dict) -> Position:
@@ -72,7 +73,7 @@ def fill_position_data(strategy: Strategy, position: Position, prices: dict, pri
     )
     if strategy.close_position_parts:
         take_profit_grid = get_take_profit_grid(
-            strategy, position.entry_price, prices['spread_percent'], position.side
+            position, position.entry_price, prices['spread_percent'], position.side
         )
         position.sl_tp_data.update(take_profit_grid)
     if strategy.target_profit:
@@ -104,54 +105,66 @@ def fill_position_data(strategy: Strategy, position: Position, prices: dict, pri
     return position
 
 
+def get_position_size(strategy: Strategy, symbol: Symbol, position_side: str, prices: dict) -> None:
+    if position_side == 'long':
+        sz = prices['okx_last_ask_size']
+    elif position_side == 'short':
+        sz = prices['okx_last_bid_size']
+    size_usdt = calc.get_usdt_from_sz(sz, symbol.okx)
+    if size_usdt < strategy.position_size:
+        logger.warning(f'Not enough liquidity, open position for {sz=}, {size_usdt=}', extra=strategy.extra_log)
+        position_size = size_usdt
+    else:
+        position_size = strategy.position_size
+        logger.info(f'Liquidity is enough, open position with admin {position_size=}', extra=strategy.extra_log)
+    return position_size
+
+
 def open_emulate_position(strategy: Strategy, symbol: Symbol, position_side: str, prices: dict) -> None:
     if not check_funding_time(strategy, symbol, position_side):
         return
     trade = OkxEmulateTrade(strategy, symbol)
-    position = trade.create_position(position_side)
+    position_size = get_position_size(strategy, symbol, position_side, prices)
+    position = trade.create_position(position_size, position_side, prices['date_time_last_prices'])
     fill_position_data(strategy, position, prices, prices)
 
 
-def open_trade_position(strategy: Strategy, symbol: Symbol, position_side: str) -> None:
+def open_trade_position(strategy: Strategy, symbol: Symbol, position_side: str, prices: dict) -> None:
     if not check_funding_time(strategy, symbol, position_side):
-        lock = TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}')
-        lock.release()
+        TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}').release()
         return
-    logger.info(
-        f'Opening {position_side} position, size in admin {strategy.position_size} usdt',
-        extra=strategy.extra_log
-    )
-    trade = OkxTrade(strategy, symbol, position_side)
+    position_size = get_position_size(strategy, symbol, position_side, prices)
+    trade = OkxTrade(strategy, symbol, position_size, position_side)
     trade.open_position()
 
 
-def increase_trade_position(strategy: Strategy, position: Position) -> None:
+def increase_trade_position(strategy: Strategy, position: Position, prices: dict) -> None:
     if not position.sl_tp_data['increased_position'] and position.sl_tp_data['stop_loss_breakeven_order_id']:
-        logger.info('Increasing position', extra=strategy.extra_log)
-        trade = OkxTrade(strategy, position.symbol, position.side)
-        trade.increase_position()
+        position_size = get_position_size(strategy, position.symbol, position.side, prices)
         position.sl_tp_data['increased_position'] = True
         position.save(update_fields=['sl_tp_data'])
+        trade = OkxTrade(strategy, position.symbol, position_size, position.side)
+        trade.open_position(increase=True)
     else:
         logger.warning('Not all conditions are met to increase the position', extra=strategy.extra_log)
-        lock = TaskLock(f'open_or_increase_position_{strategy.id}_{position.symbol}')
-        lock.release()
+        TaskLock(f'open_or_increase_position_{strategy.id}_{position.symbol}').release()
 
 
 def place_orders_after_open_trade_position(position: Position) -> None:
     try:
+        position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
+        logger.info('Placing orders after opening position', extra=position.strategy.extra_log)
         strategy = position.strategy
         symbol = position.symbol
-        position_side = position.side
         prices = cache.get(f'ask_bid_prices_{symbol}')
         if not prices:
             logger.error('Prices not found in cache', extra=strategy.extra_log)
             return
         cache.delete(f'ask_bid_prices_{symbol}')
-        prices_entry = calculation_delta_and_points_for_entry(symbol, position_side, prices)
+        prices_entry = calculation_delta_and_points_for_entry(symbol, position.side, prices)
         position = fill_position_data(strategy, position, prices, prices_entry)
         sl_tp_data = Namespace(**position.sl_tp_data)
-        trade = OkxTrade(strategy, symbol, position_side)
+        trade = OkxTrade(strategy, symbol, position.size_usdt, position.side)
         if strategy.stop_loss:
             order_id = trade.place_stop_loss(price=sl_tp_data.stop_loss_price, sz=position.position_data['pos'])
             position.sl_tp_data['stop_loss_order_id'] = int(order_id)
@@ -171,30 +184,30 @@ def place_orders_after_open_trade_position(position: Position) -> None:
                 if strategy.close_position_type == 'market':
                     trade.update_take_profit(sl_tp_data.take_profit_price)
                 if strategy.close_position_type == 'limit':
-                    trade.place_limit_order(sl_tp_data.take_profit_price, strategy.position_size)
+                    trade.place_limit_order(sl_tp_data.take_profit_price, position.size_usdt)
     except PlaceOrderException as e:
         logger.error(e, extra=strategy.extra_log)
         trade.close_entire_position()
     finally:
-        lock = TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}')
-        lock.release()
+        TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}').release()
 
 
 def place_orders_after_increase_trade_position(position: Position) -> None:
     try:
+        position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
+        logger.info('Placing orders after increasing position', extra=position.strategy.extra_log)
         strategy = position.strategy
         symbol = position.symbol
         entry_price = position.entry_price
-        position_side = position.side
         prices = cache.get(f'ask_bid_prices_{symbol}')
         if not prices:
             logger.error('Prices not found in cache', extra=strategy.extra_log)
             return
         cache.delete(f'ask_bid_prices_{symbol}')
         take_profit_grid = get_take_profit_grid(
-            strategy, entry_price, prices['spread_percent'], position_side
+            position, entry_price, prices['spread_percent'], position.side
         )
-        trade = OkxTrade(strategy, symbol, position_side)
+        trade = OkxTrade(strategy, symbol, position.size_usdt, position.side)
         position.sl_tp_data['increased_position'] = True
         position.sl_tp_data['tp_third_price'] = take_profit_grid['tp_first_price']
         position.sl_tp_data['tp_third_part'] = take_profit_grid['tp_first_part']
@@ -211,5 +224,4 @@ def place_orders_after_increase_trade_position(position: Position) -> None:
         logger.error(e, extra=strategy.extra_log)
         trade.close_entire_position()
     finally:
-        lock = TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}')
-        lock.release()
+        TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}').release()

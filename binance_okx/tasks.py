@@ -26,7 +26,8 @@ from .ws import (
 )
 from .handlers import (
     write_ask_bid_to_csv_and_cache_by_symbol, save_okx_ask_bid_to_cache,
-    save_okx_market_price_to_cache, orders_handler, check_at_market_price
+    save_okx_market_price_to_cache, orders_handler, check_at_market_price,
+    write_last_price_to_csv
 )
 from .trade import OkxTrade, OkxEmulateTrade
 
@@ -182,8 +183,11 @@ def create_or_update_position(data: dict) -> None:
             filter(lambda x: x.symbol == symbol and x.is_open is True, strategy.positions.all()),
             key=lambda x: x.id, reverse=True
         )
-        position = positions[0] if positions else None
-        strategy._extra_log.update(position=position.id if position else None)
+        if positions:
+            position = positions[0]
+            strategy._extra_log.update(position=position.id)
+        else:
+            position = None
         if not position and data['pos'] != 0:
             position = Position.objects.create(
                 position_data=data, strategy=strategy, symbol=symbol, account=account,
@@ -204,7 +208,7 @@ def create_or_update_position(data: dict) -> None:
                 position.save(update_fields=['is_open', 'trade_ids'])
                 logger.info('Position was closed', extra=strategy.extra_log)
             else:
-                increased = True if position.position_data['pos'] < data['pos'] else False
+                previous_pos = position.position_data['pos']
                 position.position_data = data
                 position.trade_ids.append(data['tradeId'])
                 position.save(update_fields=['position_data', 'trade_ids'])
@@ -213,8 +217,9 @@ def create_or_update_position(data: dict) -> None:
                     f'usdt={data["notionalUsd"]}, side={data["posSide"]}',
                     extra=strategy.extra_log
                 )
-                if increased:
-                    place_orders_after_increase_trade_position(position)
+                if position.sl_tp_data['increased_position']:
+                    if previous_pos < data['pos']:
+                        place_orders_after_increase_trade_position(position)
         create_execution.apply_async(args=(position.id,), countdown=5)
     except Exception as e:
         logger.exception(e)
@@ -243,7 +248,7 @@ def check_position_close_time(strategy_id: int, symbol: str) -> None:
                 if position:
                     strategy._extra_log.update(symbol=symbol.symbol, position=position.id)
                     if time_close_position(strategy, position):
-                        trade = OkxTrade(strategy, position.symbol, position.side)
+                        trade = OkxTrade(strategy, position.symbol, position.size_usdt, position.side)
                         trade.close_entire_position()
             elif strategy.mode == Strategy.Mode.emulate:
                 position = strategy.get_last_emulate_open_position(symbol.symbol)
@@ -251,9 +256,10 @@ def check_position_close_time(strategy_id: int, symbol: str) -> None:
                     strategy._extra_log.update(symbol=symbol.symbol, position=position.id)
                     if time_close_position(strategy, position):
                         trade = OkxEmulateTrade(strategy, position.symbol)
-                        trade.close_position(position, strategy.position_size, completely=True)
+                        trade.close_position(position, completely=True)
     except AcquireLockException:
-        logger.debug('Task check_position_close_time is already running', extra=strategy.extra_log)
+        # logger.debug('Task check_position_close_time is already running', extra=strategy.extra_log)
+        pass
     except Exception as e:
         logger.exception(e, extra=strategy.extra_log)
         raise e
@@ -273,14 +279,22 @@ def open_or_increase_position(strategy_id: int, symbol: str, position_side: str,
             strategy._extra_log.update(symbol=symbol, position=position.id if position else None)
             if strategy.mode == Strategy.Mode.trade:
                 if position:
-                    increase_trade_position(strategy, position)
+                    if position.side == position_side:
+                        increase_trade_position(strategy, position, prices)
                 else:
-                    open_trade_position(strategy, symbol, position_side)
+                    open_trade_position(strategy, symbol, position_side, prices)
             elif strategy.mode == Strategy.Mode.emulate:
-                open_emulate_position(strategy, symbol, position_side, prices)
-                lock.release()
+                if not position:
+                    open_emulate_position(strategy, symbol, position_side, prices)
+                    lock.release()
+                else:
+                    logger.info(
+                        'Current position is still open. Skip open new position',
+                        extra=strategy.extra_log
+                    )
         else:
-            logger.debug('Task open_or_increase_position is still running', extra=strategy.extra_log)
+            # logger.debug('Task open_or_increase_position is still running', extra=strategy.extra_log)
+            pass
     except Exception as e:
         logger.exception(e, extra=strategy.extra_log)
         raise e
@@ -311,21 +325,21 @@ def run_websocket_okx_positions() -> None:
                 return
             threads = {i.name: i for i in threading.enumerate()}
             for account in accounts:
-                name = f'run_forever_okx_positions_{account.id}'
+                name = f'run_forever_WebSocketOkxPositions_{account.id}'
                 if name in threads:
                     thread = threads[name]
                     if thread.is_alive():
-                        logger.debug(f'{account.name}. WebSocketOkxPositions is already running')
+                        logger.debug(f'{account.name}. WebSocketOkxPositions is now running')
                         continue
                     else:
                         logger.debug(f'{account.name}. WebSocketOkxPositions is exist but not running')
-                        thread._kill()
-                ws_okx_positions = WebSocketOkxPositions(account)
+                        thread.kill()
+                ws_okx_positions = WebSocketOkxPositions(account=account)
                 ws_okx_positions.start()
                 ws_okx_positions.add_handler(lambda data: create_or_update_position.delay(data))
                 time.sleep(3)
     except AcquireLockException:
-        logger.debug('Task run_websocket_okx_positions is already running')
+        logger.debug('Task run_websocket_okx_positions is now running')
     except Exception as e:
         logger.exception(e)
         raise e
@@ -341,21 +355,21 @@ def run_websocket_okx_orders() -> None:
                 return
             threads = {i.name: i for i in threading.enumerate()}
             for account in accounts:
-                name = f'run_forever_okx_orders_{account.id}'
+                name = f'run_forever_WebSocketOkxOrders_{account.id}'
                 if name in threads:
                     thread = threads[name]
                     if thread.is_alive():
-                        logger.debug(f'{account.name}. WebSocketOkxOrders is already running')
+                        logger.debug(f'{account.name}. WebSocketOkxOrders is now running')
                         continue
                     else:
                         logger.debug(f'{account.name}. WebSocketOkxOrders is exist but not running')
-                        thread._kill()
-                ws_okx_orders = WebSocketOkxOrders(account)
+                        thread.kill()
+                ws_okx_orders = WebSocketOkxOrders(account=account)
                 ws_okx_orders.start()
                 ws_okx_orders.add_handler(lambda data: orders_handler.delay(data))
                 time.sleep(3)
     except AcquireLockException:
-        logger.debug('Task run_websocket_okx_orders is already running')
+        logger.debug('Task run_websocket_okx_orders is now running')
     except Exception as e:
         logger.exception(e)
         raise e
@@ -370,23 +384,24 @@ ws_okx_market_price = WebSocketOkxMarketPrice()
 def run_websocket_okx_market_price() -> None:
     try:
         with TaskLock('task_run_websocket_okx_market_price'):
-            ws_okx_market_price._threads.update(
-                (i.name, i) for i in threading.enumerate() if i.name in ws_okx_market_price._threads
+            ws_okx_market_price.threads.update(
+                (i.name, i) for i in threading.enumerate()
+                if i.name in ws_okx_market_price.threads
             )
-            for name, thread in ws_okx_market_price._threads.items():
+            for thread in ws_okx_market_price.threads.values():
                 if not thread or not thread.is_alive():
-                    logger.warning(f'WebSocketOkxMarketPrice thread "{name}" is not running')
-                    ws_okx_market_price._kill()
+                    logger.warning(f'Thread "{thread}" is not running')
+                    ws_okx_market_price.kill()
                     break
             else:
-                logger.debug('WebSocketOkxMarketPrice all threads are running')
+                logger.debug(f'{ws_okx_market_price.name} all threads are running')
                 return
             ws_okx_market_price.start()
             ws_okx_market_price.add_handler(save_okx_market_price_to_cache)
             ws_okx_market_price.add_handler(check_at_market_price)
             time.sleep(3)
     except AcquireLockException:
-        logger.debug('Task run_websocket_okx_market_price is already running')
+        logger.debug('Task run_websocket_okx_market_price is now running')
     except Exception as e:
         logger.exception(e)
         raise e
@@ -396,22 +411,24 @@ def run_websocket_okx_market_price() -> None:
 def run_websocket_okx_ask_bid() -> None:
     try:
         with TaskLock('task_run_websocket_okx_ask_bid'):
-            ws_okx_ask_bid._threads.update(
-                (i.name, i) for i in threading.enumerate() if i.name in ws_okx_ask_bid._threads
+            ws_okx_ask_bid.threads.update(
+                (i.name, i) for i in threading.enumerate()
+                if i.name in ws_okx_ask_bid.threads
             )
-            for name, thread in ws_okx_ask_bid._threads.items():
+            for thread in ws_okx_ask_bid.threads.values():
                 if not thread or not thread.is_alive():
-                    logger.warning(f'WebSocketOkxAskBid thread "{name}" is not running')
-                    ws_okx_ask_bid._kill()
+                    logger.warning(f'Thread "{thread}" is not running')
+                    ws_okx_ask_bid.kill()
                     break
             else:
-                logger.debug('WebSocketOkxAskBid all threads are running')
+                logger.debug(f'{ws_okx_ask_bid.name} all threads are running')
                 return
             ws_okx_ask_bid.start()
             ws_okx_ask_bid.add_handler(save_okx_ask_bid_to_cache)
+            ws_okx_ask_bid.add_handler(write_last_price_to_csv)
             time.sleep(3)
     except AcquireLockException:
-        logger.debug('Task run_websocket_okx_ask_bid is already running')
+        logger.debug('Task run_websocket_okx_ask_bid is now running')
     except Exception as e:
         logger.exception(e)
         raise e
@@ -421,23 +438,24 @@ def run_websocket_okx_ask_bid() -> None:
 def run_websocket_binance_ask_bid() -> None:
     try:
         with TaskLock('task_run_websocket_binance_ask_bid'):
-            ws_binance_ask_bid._threads.update(
-                (i.name, i) for i in threading.enumerate() if i.name in ws_binance_ask_bid._threads
+            ws_binance_ask_bid.threads.update(
+                (i.name, i) for i in threading.enumerate()
+                if i.name in ws_binance_ask_bid.threads
             )
-            for name, thread in ws_binance_ask_bid._threads.items():
+            for thread in ws_binance_ask_bid.threads.values():
                 if not thread or not thread.is_alive():
-                    logger.warning(f'WebSocketBinaceAskBid thread "{name}" is not running')
-                    ws_binance_ask_bid._kill()
+                    logger.warning(f'Thread "{thread}" is not running')
+                    ws_binance_ask_bid.kill()
                     break
             else:
-                logger.debug('WebSocketBinaceAskBid all threads are running')
+                logger.debug(f'{ws_binance_ask_bid.name} all threads are running')
                 return
             ws_binance_ask_bid.start()
             ws_binance_ask_bid.add_handler(write_ask_bid_to_csv_and_cache_by_symbol)
             ws_binance_ask_bid.add_handler(lambda data: check_condition.delay(data['s']))
             time.sleep(3)
     except AcquireLockException:
-        logger.debug('Task run_websocket_binance_ask_bid is already running')
+        logger.debug('Task run_websocket_binance_ask_bid is now running')
     except Exception as e:
         logger.exception(e)
         raise e

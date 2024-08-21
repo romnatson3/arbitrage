@@ -1,6 +1,7 @@
 import logging
 import random
 import time
+from datetime import datetime
 from django.utils import timezone
 import okx.Trade as Trade
 import okx.Account as Account
@@ -17,11 +18,15 @@ logger = logging.getLogger(__name__)
 
 
 class OkxTrade():
-    def __init__(self, strategy: Strategy, symbol: Symbol, position_side: str, debug=False) -> None:
+    def __init__(
+        self, strategy: Strategy, symbol: Symbol, size_usdt: float,
+        position_side: str, debug=False
+    ) -> None:
         strategy._extra_log.update(symbol=symbol.symbol)
         self.strategy = strategy
         self.symbol_okx = symbol.okx
         self.symbol = symbol
+        self.size_usdt = size_usdt
         self.position_side = position_side
         apikey = strategy.second_account.api_key
         secretkey = strategy.second_account.api_secret
@@ -30,8 +35,8 @@ class OkxTrade():
         self.trade = Trade.TradeAPI(apikey, secretkey, passphrase, flag=flag, debug=debug)
         self.account = Account.AccountAPI(apikey, secretkey, passphrase, flag=flag, debug=debug)
 
-    def place_order(self, position_size: float, symbol: OkxSymbol, position_side: str) -> str:
-        sz = calc.get_sz(position_size, symbol)
+    def place_order(self, symbol: OkxSymbol, size_usdt: float, position_side: str) -> str:
+        sz = calc.get_sz(size_usdt, symbol)
         if position_side == 'long':
             side = 'buy'
         if position_side == 'short':
@@ -49,31 +54,27 @@ class OkxTrade():
                 f'Failed to place order. {result}. {sz=}, {position_side=}, {symbol.market_price=}'
             )
         order_id = result['data'][0]['ordId']
-        logger.info(f'Placed order {sz=} {order_id=}', extra=self.strategy.extra_log)
+        logger.info(
+            f'Placed order {sz=}, {size_usdt=}, {position_side=} {order_id=}',
+            extra=self.strategy.extra_log
+        )
         return order_id
 
-    def open_position(self, position_size: float = None, symbol: OkxSymbol = None, position_side: str = None) -> None:
-        if not symbol:
-            symbol = self.symbol_okx
-        if not position_size:
-            position_size = self.strategy.position_size
-        if not position_side:
-            position_side = self.position_side
-        order_id = self.place_order(position_size, symbol, position_side)
-        logger.warning(
-            f'Opened {position_side} position, {position_size=} usdt, {order_id=}',
-            extra=self.strategy.extra_log
-        )
-
-    def increase_position(self):
+    def open_position(self, increase: bool = False) -> None:
         symbol = self.symbol_okx
-        position_size = self.strategy.position_size
+        size_usdt = self.size_usdt
         position_side = self.position_side
-        order_id = self.place_order(position_size, symbol, position_side)
-        logger.warning(
-            f'Increased {position_side} position, {position_size=} usdt, {order_id=}',
-            extra=self.strategy.extra_log
-        )
+        order_id = self.place_order(symbol, size_usdt, position_side)
+        if not increase:
+            logger.warning(
+                f'Opened {position_side} position, {size_usdt=}, {order_id=}',
+                extra=self.strategy.extra_log
+            )
+        else:
+            logger.warning(
+                f'Increased {position_side} position, {size_usdt=}, {order_id=}',
+                extra=self.strategy.extra_log
+            )
 
     def get_position(self, symbol: OkxSymbol = None) -> dict:
         if not symbol:
@@ -173,7 +174,10 @@ class OkxTrade():
                 f'Failed to place stop loss. {result}. {price=}, {sz=}, {symbol.market_price=}'
             )
         order_id = result['data'][0]['algoId']
-        logger.info(f'Placed stop_loss_price={price}, {sz=}, {symbol.market_price=}, {order_id=}', extra=self.strategy.extra_log)
+        logger.info(
+            f'Placed stop_loss_price={price}, {sz=}, {symbol.market_price=}, {order_id=}',
+            extra=self.strategy.extra_log
+        )
         return order_id
 
     def place_take_profit(self, price: float, symbol: OkxSymbol = None, position_side: str = None) -> str:
@@ -242,15 +246,15 @@ class OkxTrade():
     def place_limit_order(
         self,
         price: float,
-        position_size: float = None,
-        symbol: OkxSymbol = None,
-        position_side: str = None
+        size_usdt: float = None,
+        position_side: str = None,
+        symbol: OkxSymbol = None
     ) -> str:
         if not symbol:
             symbol = self.symbol_okx
-        if not position_size:
-            position_size = self.strategy.position_size
-        sz = calc.get_sz(position_size, symbol)
+        if not size_usdt:
+            size_usdt = self.size_usdt
+        sz = calc.get_sz(size_usdt, symbol)
         if not position_side:
             position_side = self.position_side
         if position_side == 'long':
@@ -376,36 +380,39 @@ class OkxEmulateTrade():
         self.strategy = strategy
         self.symbol = symbol
 
-    def create_position(self, position_side: str) -> Position:
-        logger.warning(
-            f'Creating virtual {position_side} position, size {self.strategy.position_size} usdt',
-            extra=self.strategy.extra_log
-        )
+    def create_position(self, size_usdt: float, position_side: str, date_time: str) -> Position:
         position_data = Position.get_position_empty_data()
+        if not size_usdt:
+            size_usdt = self.strategy.position_size
+        sz = calc.get_sz(size_usdt, self.symbol.okx)
         position_data.update(
             posSide=position_side,
-            cTime=timezone.localtime().strftime('%d-%m-%Y %H:%M:%S.%f'),
-            pos=calc.get_sz(self.strategy.position_size, self.symbol.okx),
+            cTime=date_time,
+            pos=sz,
             avgPx=self.symbol.okx.market_price,
-            notionalUsd=self.strategy.position_size,
+            notionalUsd=size_usdt,
         )
         position = Position.objects.create(
             strategy=self.strategy, symbol=self.symbol, mode=Strategy.Mode.emulate,
             position_data=position_data, account=self.strategy.second_account
         )
         self.strategy._extra_log.update(position=position.id)
-        logger.info('Created virtual position', extra=self.strategy.extra_log)
-        self._create_open_execution(position)
+        logger.warning(
+            f'Created virtual {position_side} position, {sz=}, {size_usdt=} '
+            f'at {date_time}, avgPx={position_data["avgPx"]}',
+            extra=self.strategy.extra_log
+        )
+        self._create_open_execution(position, date_time)
         return position
 
-    def _create_open_execution(self, position: Position) -> None:
+    def _create_open_execution(self, position: Position, date_time: str) -> None:
         execution_data = Execution.get_empty_data()
         execution_data.update(
             subType='Open long' if position.side == 'long' else 'Open short',
-            sz=position.position_data['pos'],
+            sz=position.sz,
             px=position.position_data['avgPx'],
-            ts=timezone.localtime().strftime('%d-%m-%Y %H:%M:%S.%f'),
-            fee=round(self.strategy.position_size * self.strategy.open_fee / 100, 10),
+            ts=date_time,
+            fee=round(position.size_usdt * self.strategy.open_fee / 100, 10),
             pnl=None
         )
         Execution.objects.create(
@@ -421,33 +428,39 @@ class OkxEmulateTrade():
             extra=self.strategy.extra_log
         )
 
-    def close_position(self, position: Position, size_usdt: float, completely: bool = False) -> None:
+    def close_position(
+        self,
+        position: Position,
+        size_usdt: float = None,
+        date_time: str = '',
+        completely: bool = False
+    ) -> None:
+        if not date_time:
+            date_time = datetime.fromtimestamp(timezone.now().timestamp()).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
         if completely:
-            sz = position.position_data['pos']
-            base_coin = calc.get_base_coin_from_sz(sz, self.symbol.okx.ct_val)
-            size_usdt = base_coin * self.symbol.okx.market_price
+            sz = position.sz
+            size_usdt = calc.get_usdt_from_sz(sz, self.symbol.okx)
             position.is_open = False
             position.save(update_fields=['is_open'])
             logger.warning(
-                f'Virtual position is closed completely {size_usdt=}',
+                f'Virtual position is closed completely {sz=} {size_usdt=:.2f}',
                 extra=self.strategy.extra_log
             )
         else:
-            logger.warning(
-                f'Virtual position is closed partially {size_usdt=}',
-                extra=self.strategy.extra_log
-            )
             sz = calc.get_sz(size_usdt, self.symbol.okx)
             position.position_data['pos'] -= sz
             position.save(update_fields=['position_data'])
-        self._create_close_execution(position, size_usdt)
+            logger.warning(
+                f'Virtual position is closed partially {sz=} {size_usdt=:.2f}',
+                extra=self.strategy.extra_log
+            )
+        self._create_close_execution(position, sz, size_usdt, date_time)
 
-    def _create_close_execution(self, position: Position, size_usdt: float) -> None:
+    def _create_close_execution(self, position: Position, sz: float, size_usdt: float, date_time: str) -> None:
         sub_type = 'Open long' if position.side == 'long' else 'Open short'
         open_execution = position.executions.filter(data__subType=sub_type).first()
         open_fee = open_execution.data['fee']
         open_price = open_execution.data['px']
-        sz = calc.get_sz(size_usdt, self.symbol.okx)
         base_coin = calc.get_base_coin_from_sz(sz, self.symbol.okx.ct_val)
         close_price = self.symbol.okx.market_price
         close_fee = round(size_usdt * self.strategy.close_fee / 100, 10)
@@ -460,7 +473,7 @@ class OkxEmulateTrade():
             subType='Close long' if position.side == 'long' else 'Close short',
             sz=sz,
             px=close_price,
-            ts=timezone.localtime().strftime('%d-%m-%Y %H:%M:%S.%f'),
+            ts=date_time,
             fee=close_fee,
             pnl=pnl
         )
@@ -478,7 +491,8 @@ class OkxEmulateTrade():
         )
 
 
-def get_take_profit_grid(strategy: Strategy, entry_price: float, spread_percent: float, position_side: str):
+def get_take_profit_grid(position: Position, entry_price: float, spread_percent: float, position_side: str) -> dict:
+    strategy = position.strategy
     if position_side == 'long':
         tp_first_price = (
             entry_price * (1 + (strategy.tp_first_price_percent + strategy.open_plus_close_fee + spread_percent) / 100)
@@ -494,10 +508,10 @@ def get_take_profit_grid(strategy: Strategy, entry_price: float, spread_percent:
             entry_price * (1 - (strategy.tp_second_price_percent + strategy.open_plus_close_fee + spread_percent) / 100)
         )
     tp_first_amount_without_fee = (
-        strategy.position_size / 100 * strategy.tp_first_part_percent * (1 + (strategy.tp_first_price_percent + spread_percent) / 100)
+        position.size_usdt / 100 * strategy.tp_first_part_percent * (1 + (strategy.tp_first_price_percent + spread_percent) / 100)
     )
     tp_second_amount_without_fee = (
-        strategy.position_size / 100 * strategy.tp_second_part_percent * (1 + (strategy.tp_second_price_percent + spread_percent) / 100)
+        position.size_usdt / 100 * strategy.tp_second_part_percent * (1 + (strategy.tp_second_price_percent + spread_percent) / 100)
     )
     tp_first_amount_with_fee = tp_first_amount_without_fee * (1 + strategy.open_plus_close_fee / 100)
     tp_second_amount_with_fee = tp_second_amount_without_fee * (1 + strategy.open_plus_close_fee / 100)

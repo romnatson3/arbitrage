@@ -75,11 +75,12 @@ class StrategyForm(forms.ModelForm):
         if target_profit <= 0:
             self.add_error('target_profit', 'Target profit must be greater than 0')
         if close_position_parts:
-            if tp_first_price_percent <= 0 or tp_first_part_percent <= 0 or tp_second_price_percent <= 0 or tp_second_part_percent <= 0:
+            # if tp_first_price_percent <= 0 or tp_first_part_percent <= 0 or tp_second_price_percent <= 0 or tp_second_part_percent <= 0:
+            if tp_first_price_percent <= 0 or tp_first_part_percent <= 0 or tp_second_price_percent <= 0:
                 self.add_error('tp_first_price_percent', 'Take profit price percent must be greater than 0')
                 self.add_error('tp_first_part_percent', 'Take profit part percent must be greater than 0')
                 self.add_error('tp_second_price_percent', 'Take profit price percent must be greater than 0')
-                self.add_error('tp_second_part_percent', 'Take profit part percent must be greater than 0')
+                # self.add_error('tp_second_part_percent', 'Take profit part percent must be greater than 0')
         if search_duration < 0:
             self.add_error('search_duration', 'Search duration must be greater than 0')
         if search_duration > 60000:

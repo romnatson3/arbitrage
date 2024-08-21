@@ -27,6 +27,10 @@ class Calculator():
         base_coin = sz * contract_value
         return base_coin
 
+    def get_usdt_from_sz(self, sz: float, symbol: OkxSymbol) -> float:
+        usdt = sz * symbol.market_price * symbol.ct_val
+        return usdt
+
     def get_stop_loss_price(self, price: float, percentage: float, position_side: str) -> float:
         if percentage <= 0:
             return 0
@@ -85,14 +89,17 @@ def check_all_conditions(strategy: Strategy, symbol: Symbol) -> tuple[bool, str,
         logger.debug('No records found in cache', extra=strategy.extra_log)
         return nothing
     data = records.pop(-1)
-    binance_last_ask = data['binance_ask']
-    binance_last_bid = data['binance_bid']
-    okx_last_ask = data['okx_ask']
-    okx_last_bid = data['okx_bid']
+    binance_last_ask = data['binance_ask_price']
+    binance_last_bid = data['binance_bid_price']
+    okx_last_ask = data['okx_ask_price']
+    okx_last_ask_size = data['okx_ask_size']
+    okx_last_bid = data['okx_bid_price']
+    okx_last_bid_size = data['okx_bid_size']
     date_time_last_prices = data['date_time']
     prices.update(
         binance_last_ask=binance_last_ask, binance_last_bid=binance_last_bid,
-        okx_last_ask=okx_last_ask, okx_last_bid=okx_last_bid,
+        okx_last_ask=okx_last_ask, okx_last_ask_size=okx_last_ask_size,
+        okx_last_bid=okx_last_bid, okx_last_bid_size=okx_last_bid_size,
         date_time_last_prices=date_time_last_prices
     )
     logger.debug(
@@ -109,10 +116,10 @@ def check_all_conditions(strategy: Strategy, symbol: Symbol) -> tuple[bool, str,
         )
         return nothing
     for i in records:
-        binance_previous_ask = i['binance_ask']
-        binance_previous_bid = i['binance_bid']
-        okx_previous_ask = i['okx_ask']
-        okx_previous_bid = i['okx_bid']
+        binance_previous_ask = i['binance_ask_price']
+        binance_previous_bid = i['binance_bid_price']
+        okx_previous_ask = i['okx_ask_price']
+        okx_previous_bid = i['okx_bid_price']
         date_time_previous_prices = i['date_time']
         prices.update(
             binance_previous_ask=binance_previous_ask, binance_previous_bid=binance_previous_bid,
@@ -206,7 +213,7 @@ def check_second_condition(
             prices.update(
                 spread_points=spread_points, spread_percent=spread_percent,
                 delta_points=delta_points, delta_percent=delta_percent,
-                target_delta=min_delta_percent,
+                target_delta=min_delta_percent, position_side=position_side
             )
             return True, prices
         else:
@@ -228,10 +235,10 @@ def calculation_delta_and_points_for_entry(symbol: Symbol, position_side: str, p
     conection = get_redis_connection('default')
     last_prices = conection.zrange(f'binance_okx_ask_bid_{symbol.symbol}', -1, -1)[0]
     last_prices = json.loads(last_prices)
-    binance_last_ask = last_prices['binance_ask']
-    binance_last_bid = last_prices['binance_bid']
-    okx_last_ask = last_prices['okx_ask']
-    okx_last_bid = last_prices['okx_bid']
+    binance_last_ask = last_prices['binance_ask_price']
+    binance_last_bid = last_prices['binance_bid_price']
+    okx_last_ask = last_prices['okx_ask_price']
+    okx_last_bid = last_prices['okx_bid_price']
     binance_previous_ask = previous_prices['binance_previous_ask']
     binance_previous_bid = previous_prices['binance_previous_bid']
     okx_previous_ask = previous_prices['okx_previous_ask']

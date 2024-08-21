@@ -228,6 +228,7 @@ class StrategyAdmin(admin.ModelAdmin):
                 'fields': (
                     'close_position_parts', 'stop_loss_breakeven',
                     ('tp_first_price_percent', 'tp_first_part_percent'),
+                    # ('tp_second_price_percent')
                     ('tp_second_price_percent', 'tp_second_part_percent')
                 )
             }
@@ -350,7 +351,7 @@ class PositionAdmin(admin.ModelAdmin):
         else:
             executions = list(obj.executions.all())
             if executions:
-                executions.sort(key=lambda x: x.created_at)
+                executions.sort(key=lambda x: x.bill_id)
                 last_execution = executions[-1]
                 close_time = timezone.datetime.strptime(last_execution.data['ts'], '%d-%m-%Y %H:%M:%S.%f')
                 duration = (close_time - open_time).total_seconds()
@@ -460,9 +461,9 @@ class PositionAdmin(admin.ModelAdmin):
                     ask_bid_data.spread_percent_entry,
                     usdt,
                     position_data.cTime.split(' ')[0],
-                    position_data.cTime.split(' ')[1][:-3],
+                    position_data.cTime.split(' ')[1],
                     data.px,
-                    None if is_open else data.ts.split(' ')[1][:-3],
+                    None if is_open else data.ts.split(' ')[1],
                     None if is_open else duration,
                     data.fee,
                     None if is_open else data.pnl
@@ -501,7 +502,7 @@ class PositionAdmin(admin.ModelAdmin):
                     '',
                     '',
                     data.px,
-                    '' if is_open else data.ts.split(' ')[1][:-3],
+                    '' if is_open else data.ts.split(' ')[1],
                     '' if is_open else duration,
                     data.fee,
                     '' if is_open else data.pnl
