@@ -202,7 +202,8 @@ class StrategyAdmin(admin.ModelAdmin):
         js = ('binance_okx/strategy.js',)
 
     list_display = (
-        'id', 'name', 'enabled', 'mode', 'position_size', '_symbols', 'updated_at'
+        'id', 'name', 'enabled', 'mode', 'position_size', 'close_position_type',
+        '_symbols', 'updated_at'
     )
     search_fields = ('name',)
     list_filter = ()
@@ -228,8 +229,8 @@ class StrategyAdmin(admin.ModelAdmin):
                 'fields': (
                     'close_position_parts', 'stop_loss_breakeven',
                     ('tp_first_price_percent', 'tp_first_part_percent'),
-                    # ('tp_second_price_percent')
-                    ('tp_second_price_percent', 'tp_second_part_percent')
+                    ('tp_second_price_percent')
+                    # ('tp_second_price_percent', 'tp_second_part_percent')
                 )
             }
         ),
@@ -466,7 +467,7 @@ class PositionAdmin(admin.ModelAdmin):
                     None if is_open else data.ts.split(' ')[1],
                     None if is_open else duration,
                     data.fee,
-                    None if is_open else data.pnl
+                    None if is_open else f'{data.pnl:.5f}'
                 ]
             else:
                 row = [
@@ -505,7 +506,7 @@ class PositionAdmin(admin.ModelAdmin):
                     '' if is_open else data.ts.split(' ')[1],
                     '' if is_open else duration,
                     data.fee,
-                    '' if is_open else data.pnl
+                    '' if is_open else f'{data.pnl:.5f}'
                 ]
             d = dict(zip(headers, row))
             for i, j in d.items():

@@ -20,8 +20,7 @@ class Calculator():
         if contract_count < symbol.lot_sz:
             return symbol.lot_sz
         sz = floor(contract_count / symbol.lot_sz) * symbol.lot_sz
-        # return round(sz, 1)
-        return sz
+        return round(sz, 2)
 
     def get_base_coin_from_sz(self, sz: float, contract_value: float) -> float:
         base_coin = sz * contract_value

@@ -14,7 +14,7 @@ import okx.Account
 from exchange.celery import app
 from .helper import TaskLock, check_all_conditions, convert_dict_values, get_bills
 from .models import Strategy, Symbol, Account, Position, StatusLog, OkxSymbol, BinanceSymbol, Bill, Execution
-from .exceptions import AcquireLockException
+from .exceptions import AcquireLockException, ClosePositionException
 from .strategy import (
     open_trade_position, open_emulate_position, increase_trade_position,
     place_orders_after_open_trade_position, place_orders_after_increase_trade_position,
@@ -260,6 +260,11 @@ def check_position_close_time(strategy_id: int, symbol: str) -> None:
     except AcquireLockException:
         # logger.debug('Task check_position_close_time is already running', extra=strategy.extra_log)
         pass
+    except ClosePositionException as e:
+        logger.error(e, extra=strategy.extra_log)
+        if re.search('Position .+? exist', str(e)):
+            position.is_open = False
+            position.save(update_fields=['is_open'])
     except Exception as e:
         logger.exception(e, extra=strategy.extra_log)
         raise e

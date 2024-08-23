@@ -93,21 +93,20 @@ class OkxTrade():
                 return data
         raise GetPositionException('Failed to get position data')
 
-    def close_position(self, size_usdt: float, symbol: OkxSymbol = None, position_side: str = None) -> None:
-        if not symbol:
-            symbol = self.symbol_okx
-        sz = calc.get_sz(size_usdt, symbol)
-        if not position_side:
-            position_side = self.position_side
-        if position_side == 'long':
+    def close_position(self, size_usdt: float = None, sz: float = None) -> tuple[str, float]:
+        if size_usdt:
+            sz = calc.get_sz(size_usdt, self.symbol_okx)
+        if sz:
+            size_usdt = calc.get_usdt_from_sz(sz, self.symbol_okx)
+        if self.position_side == 'long':
             side = 'sell'
-        if position_side == 'short':
+        if self.position_side == 'short':
             side = 'buy'
         result = self.trade.place_order(
-            instId=symbol.inst_id,
+            instId=self.symbol_okx.inst_id,
             ordType='market',
             tdMode='isolated',
-            posSide=position_side,
+            posSide=self.position_side,
             side=side,
             sz=sz
         )
@@ -115,9 +114,10 @@ class OkxTrade():
             raise PlaceOrderException(result)
         order_id = result['data'][0]['ordId']
         logger.warning(
-            f'Closed {position_side} position partially {size_usdt=} {order_id=}',
+            f'Closed {self.position_side} position partially {sz=}, {size_usdt=}, {order_id=}',
             extra=self.strategy.extra_log
         )
+        return size_usdt, sz
 
     def close_entire_position(self, symbol: OkxSymbol = None, position_side: str = None) -> None:
         if not symbol:
@@ -135,7 +135,7 @@ class OkxTrade():
         if result['code'] != '0':
             raise ClosePositionException(f'Failed to close {position_side} position. {result}')
         else:
-            logger.warning(f'Closed {position_side} position', extra=self.strategy.extra_log)
+            logger.warning(f'Closed entire {position_side} position', extra=self.strategy.extra_log)
 
     def place_stop_loss(
         self,
@@ -244,39 +244,37 @@ class OkxTrade():
         return order_id
 
     def place_limit_order(
-        self,
-        price: float,
-        size_usdt: float = None,
-        position_side: str = None,
-        symbol: OkxSymbol = None
-    ) -> str:
-        if not symbol:
-            symbol = self.symbol_okx
-        if not size_usdt:
-            size_usdt = self.size_usdt
-        sz = calc.get_sz(size_usdt, symbol)
-        if not position_side:
-            position_side = self.position_side
-        if position_side == 'long':
+        self, price: float, size_usdt: float = None, sz: float = None
+    ) -> tuple[str, float, float]:
+        if size_usdt:
+            sz = calc.get_sz(size_usdt, self.symbol_okx)
+        if sz:
+            size_usdt = calc.get_usdt_from_sz(sz, self.symbol_okx)
+        if self.position_side == 'long':
             side = 'sell'
-        if position_side == 'short':
+        if self.position_side == 'short':
             side = 'buy'
         result = self.trade.place_order(
-            instId=symbol.inst_id,
+            instId=self.symbol_okx.inst_id,
             ordType='limit',
             tdMode='isolated',
-            posSide=position_side,
+            posSide=self.position_side,
             side=side,
             sz=sz,
             px=price
         )
         if result['code'] != '0':
             raise PlaceOrderException(
-                f'Failed to place limit order. {result}. {sz=}, {price=}, {position_side=}, {symbol.market_price=}'
+                f'Failed to place limit order. {result}. {sz=}, {size_usdt=}, '
+                f'{price=}, position_side={self.position_side}, '
+                f'market_price={self.symbol_okx.market_price}'
             )
         order_id = result['data'][0]['ordId']
-        logger.info(f'Placed limit order {sz=} {price=} {order_id=}', extra=self.strategy.extra_log)
-        return order_id
+        logger.info(
+            f'Placed limit order {sz=}, {size_usdt=}, {price=}, {order_id=}',
+            extra=self.strategy.extra_log
+        )
+        return order_id, size_usdt, sz
 
     def get_order_list(self, symbol: OkxSymbol = None) -> list:
         if not symbol:
