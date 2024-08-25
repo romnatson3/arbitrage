@@ -218,7 +218,7 @@ class StrategyAdmin(admin.ModelAdmin):
             None,
             {
                 'fields': (
-                    'position_size', ('taker_fee', 'maker_fee'), 'target_profit', 'stop_loss',
+                    'position_size', ('taker_fee', 'maker_fee'), 'take_profit', 'stop_loss',
                     'close_position_type', 'time_to_close', 'time_to_funding', 'only_profit'
                 )
             }

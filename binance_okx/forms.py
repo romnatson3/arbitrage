@@ -51,7 +51,7 @@ class StrategyForm(forms.ModelForm):
         position_size: float = cleaned_data.get('position_size')
         taker_fee: float = cleaned_data.get('taker_fee')
         maker_fee: float = cleaned_data.get('maker_fee')
-        target_profit: float = cleaned_data.get('target_profit')
+        take_profit: float = cleaned_data.get('take_profit')
         close_position_type: str = cleaned_data.get('close_position_type')
         close_position_parts: bool = cleaned_data.get('close_position_parts')
         stop_loss_breakeven: bool = cleaned_data.get('stop_loss_breakeven')
@@ -72,8 +72,8 @@ class StrategyForm(forms.ModelForm):
             self.add_error('taker_fee', 'Taker fee must be greater than 0')
         if maker_fee <= 0 and close_position_type == 'limit':
             self.add_error('maker_fee', 'Maker fee must be greater than 0')
-        if target_profit <= 0:
-            self.add_error('target_profit', 'Target profit must be greater than 0')
+        if take_profit <= 0:
+            self.add_error('take_profit', 'Take profit must be greater than 0')
         if close_position_parts:
             # if tp_first_price_percent <= 0 or tp_first_part_percent <= 0 or tp_second_price_percent <= 0 or tp_second_part_percent <= 0:
             if tp_first_price_percent <= 0 or tp_first_part_percent <= 0 or tp_second_price_percent <= 0:

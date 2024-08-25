@@ -268,16 +268,16 @@ def closing_position_by_market(data: dict) -> None:
                     closing_emulate_position_market_stop_loss.delay(
                         strategy.id, symbol, ask_price, bid_price, date_time
                     )
-                if strategy.close_position_parts:
-                    if strategy.close_position_type == 'market':
+                if strategy.close_position_type == 'market':
+                    if strategy.close_position_parts:
                         closing_emulate_position_market_parts.delay(
                             strategy.id, symbol, ask_price, bid_price, date_time
                         )
-                else:
-                    if strategy.target_profit:
-                        closing_emulate_position_market_take_profit.delay(
-                            strategy.id, symbol, ask_price, bid_price, date_time
-                        )
+                    else:
+                        if strategy.take_profit:
+                            closing_emulate_position_market_take_profit.delay(
+                                strategy.id, symbol, ask_price, bid_price, date_time
+                            )
     except Exception as e:
         logger.exception(e)
         raise e
@@ -318,9 +318,12 @@ def closing_emulate_position_by_limit(
             bid_price = position.symbol.okx.bid_price
             ask_price = position.symbol.okx.ask_price
             if strategy.close_position_parts:
-                ...
+                if not sl_tp_data.first_part_closed:
+                    ...
+                elif not sl_tp_data.second_part_closed:
+                    ...
             else:
-                if strategy.target_profit:
+                if strategy.take_profit:
                     if last_price == sl_tp_data.take_profit_price:
                         logger.debug(
                             f'Last price {last_price} is equal to take_profit_price={sl_tp_data.take_profit_price}',
@@ -342,7 +345,8 @@ def closing_emulate_position_by_limit(
                                 close_price = ask_price
                             if close_price:
                                 logger.info(
-                                    f'Take profit price {sl_tp_data.take_profit_price} reached {close_price=}',
+                                    f'Take profit price {sl_tp_data.take_profit_price} reached {close_price=}. '
+                                    'Close position completely by limit order',
                                     extra=strategy.extra_log
                                 )
                                 trade.close_position(position, close_price, date_time=date_time, completely=True)
@@ -352,6 +356,11 @@ def closing_emulate_position_by_limit(
                                 f'Total last size {total_last_size} is less than position size {position.sz}',
                                 extra=strategy.extra_log
                             )
+                    else:
+                        logger.debug(
+                            f'Last price {last_price} is not equal to take_profit_price={sl_tp_data.take_profit_price}',
+                            extra=strategy.extra_log
+                        )
     except Exception as e:
         logger.exception(e, extra=strategy.extra_log)
         raise e

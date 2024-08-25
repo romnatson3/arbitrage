@@ -195,8 +195,8 @@ def check_second_condition(
             extra=strategy.extra_log
         )
         spread_percent = (okx_last_ask - okx_last_bid) / okx_last_bid * 100
-        target_profit = strategy.tp_first_price_percent if strategy.close_position_parts else strategy.target_profit
-        min_delta_percent = strategy.open_plus_close_fee + spread_percent + target_profit
+        take_profit = strategy.tp_first_price_percent if strategy.close_position_parts else strategy.take_profit
+        min_delta_percent = strategy.open_plus_close_fee + spread_percent + take_profit
         delta_percent = binance_delta_percent - okx_delta_percent
         if delta_percent >= min_delta_percent:
             logger.info(

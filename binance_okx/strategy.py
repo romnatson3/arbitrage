@@ -76,9 +76,9 @@ def fill_position_data(strategy: Strategy, position: Position, prices: dict, pri
             position, position.entry_price, prices['spread_percent'], position.side
         )
         position.sl_tp_data.update(take_profit_grid)
-    if strategy.target_profit:
+    if strategy.take_profit:
         position.sl_tp_data['take_profit_price'] = calc.get_take_profit_price(
-            position.entry_price, strategy.target_profit, strategy.open_plus_close_fee,
+            position.entry_price, strategy.take_profit, strategy.open_plus_close_fee,
             prices['spread_percent'], position.side
         )
     if strategy.stop_loss:
@@ -195,7 +195,7 @@ def place_orders_after_open_trade_position(position: Position) -> None:
                 position.save(update_fields=['sl_tp_data'])
                 logger.debug(f'Save limit {order_id=} for second part', extra=strategy.extra_log)
         else:
-            if strategy.target_profit:
+            if strategy.take_profit:
                 if strategy.close_position_type == 'market':
                     trade.update_take_profit(sl_tp_data.take_profit_price)
                 if strategy.close_position_type == 'limit':

@@ -260,7 +260,7 @@ class Strategy(BaseModel):
     position_size = models.FloatField('Position size', default=0.0, help_text='Max position size, USDT')
     taker_fee = models.FloatField('Taker fee', default=0.0, help_text='Taker fee, %, market order')
     maker_fee = models.FloatField('Maker fee', default=0.0, help_text='Maker fee, %, limit order')
-    target_profit = models.FloatField('Target profit', default=0.0, help_text='Target profit, %')
+    take_profit = models.FloatField('Take profit', default=0.0, help_text='Take profit, %')
     stop_loss = models.FloatField('Stop loss', default=0.0, help_text='Stop loss, %')
     close_position_type = models.CharField('Close position type', choices=ClosePositionType.choices, default=ClosePositionType.market, help_text='Close position type')
     time_to_close = models.IntegerField('Time to close', default=0, help_text='Time to close, seconds')

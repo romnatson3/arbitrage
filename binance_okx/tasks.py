@@ -283,7 +283,7 @@ def open_or_increase_position(strategy_id: int, symbol: str, position_side: str,
         lock = TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}')
         if lock.acquire():
             cache.set(f'ask_bid_prices_{symbol}', prices)
-            logger.info(f'Caching ask_bid_prices_{symbol} {prices}', extra=strategy.extra_log)
+            logger.debug(f'Caching ask_bid_prices_{symbol} {prices}', extra=strategy.extra_log)
             position = Position.objects.filter(strategy=strategy, symbol=symbol, is_open=True).last()
             strategy._extra_log.update(symbol=symbol, position=position.id if position else None)
             if strategy.mode == Strategy.Mode.trade:
@@ -407,9 +407,7 @@ def run_websocket_okx_last_price() -> None:
                 logger.debug(f'{ws_okx_last_price.name} all threads are running')
                 return
             ws_okx_last_price.start()
-            # ws_okx_last_price.add_handler(
-            #     lambda data: closing_position_by_limit.delay(data)
-            # )
+            ws_okx_last_price.add_handler(lambda data: closing_position_by_limit.delay(data))
             time.sleep(3)
     except AcquireLockException:
         logger.debug('Task run_websocket_okx_last_price is now running')
