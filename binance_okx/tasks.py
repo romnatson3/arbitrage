@@ -17,7 +17,7 @@ from .models import Strategy, Symbol, Account, Position, StatusLog, OkxSymbol, B
 from .exceptions import AcquireLockException, ClosePositionException
 from .strategy import (
     open_trade_position, open_emulate_position, increase_trade_position,
-    place_orders_after_open_trade_position, place_orders_after_increase_trade_position,
+    place_orders_after_open_trade_position, calc_tp_and_place_orders_after_increase_trade_position,
     time_close_position
 )
 from .ws import (
@@ -26,8 +26,8 @@ from .ws import (
 )
 from .handlers import (
     write_ask_bid_to_csv_and_cache_by_symbol, save_okx_ask_bid_to_cache,
-    save_okx_market_price_to_cache, orders_handler, check_at_market_price,
-    write_last_price_to_csv
+    save_okx_market_price_to_cache, orders_handler, closing_position_by_market,
+    save_okx_last_price_and_size_to_cache
 )
 from .trade import OkxTrade, OkxEmulateTrade
 
@@ -219,7 +219,7 @@ def create_or_update_position(data: dict) -> None:
                 )
                 if position.sl_tp_data['increased_position']:
                     if previous_pos < data['pos']:
-                        place_orders_after_increase_trade_position(position)
+                        calc_tp_and_place_orders_after_increase_trade_position(position)
         create_execution.apply_async(args=(position.id,), countdown=5)
     except Exception as e:
         logger.exception(e)
@@ -248,7 +248,7 @@ def check_position_close_time(strategy_id: int, symbol: str) -> None:
                 if position:
                     strategy._extra_log.update(symbol=symbol.symbol, position=position.id)
                     if time_close_position(strategy, position):
-                        trade = OkxTrade(strategy, position.symbol, position.size_usdt, position.side)
+                        trade = OkxTrade(strategy, position.symbol, position.sz, position.side)
                         trade.close_entire_position()
             elif strategy.mode == Strategy.Mode.emulate:
                 position = strategy.get_last_emulate_open_position(symbol.symbol)
@@ -256,7 +256,11 @@ def check_position_close_time(strategy_id: int, symbol: str) -> None:
                     strategy._extra_log.update(symbol=symbol.symbol, position=position.id)
                     if time_close_position(strategy, position):
                         trade = OkxEmulateTrade(strategy, position.symbol)
-                        trade.close_position(position, completely=True)
+                        if position.side == 'long':
+                            close_price = position.symbol.okx.bid_price
+                        elif position.side == 'short':
+                            close_price = position.symbol.okx.ask_price
+                        trade.close_position(position, close_price, completely=True)
     except AcquireLockException:
         # logger.debug('Task check_position_close_time is already running', extra=strategy.extra_log)
         pass
@@ -403,7 +407,6 @@ def run_websocket_okx_market_price() -> None:
                 return
             ws_okx_market_price.start()
             ws_okx_market_price.add_handler(save_okx_market_price_to_cache)
-            ws_okx_market_price.add_handler(check_at_market_price)
             time.sleep(3)
     except AcquireLockException:
         logger.debug('Task run_websocket_okx_market_price is now running')
@@ -430,7 +433,8 @@ def run_websocket_okx_ask_bid() -> None:
                 return
             ws_okx_ask_bid.start()
             ws_okx_ask_bid.add_handler(save_okx_ask_bid_to_cache)
-            ws_okx_ask_bid.add_handler(write_last_price_to_csv)
+            ws_okx_ask_bid.add_handler(save_okx_last_price_and_size_to_cache)
+            ws_okx_ask_bid.add_handler(closing_position_by_market)
             time.sleep(3)
     except AcquireLockException:
         logger.debug('Task run_websocket_okx_ask_bid is now running')

@@ -328,7 +328,7 @@ class PositionAdmin(admin.ModelAdmin):
     def _contract(self, obj) -> str:
         pos = obj.position_data.get('pos')
         if pos:
-            return round(float(pos), 1)
+            return round(float(pos), 2)
         return 0
 
     @admin.display(description='USDT amount')

@@ -105,7 +105,7 @@ services:
       - postgres
       - default
       - positions
-      - check_position_at_market_price
+      - market
       - check_condition
       - websocket_okx_orders
       - websocket_okx_ask_bid
@@ -187,9 +187,9 @@ services:
         tag: exchange_positions
         syslog-facility: local5
 
-  check_position_at_market_price:
+  market:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 15 -l INFO -Q check_position_at_market_price 
+    entrypoint: celery -A exchange worker -c 15 -l INFO -Q market 
     deploy:
       mode: replicated
       replicas: 1
@@ -206,7 +206,7 @@ services:
     logging:
       driver: syslog
       options:
-        tag: exchange_check_position_at_market_price
+        tag: market
         syslog-facility: local5
 
   websocket_okx_orders:

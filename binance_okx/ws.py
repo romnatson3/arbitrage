@@ -30,7 +30,7 @@ class WebSocketOkxAskBid():
         self.handlers = []
         self.subscribed_inst_ids = []
         self._inst_id_field_path = 'symbols__okx__data__instId'
-        self._previous_ask_bid: dict[str, list[float]] = {}
+        self._previous_ask_bid_data: dict[str, list[float]] = {}
         self.methods_names = kwargs.get('methods_names', ['run_forever', 'ping', 'monitoring_inst_ids'])
         self.threads: dict = self._get_threads_names()
 
@@ -140,14 +140,10 @@ class WebSocketOkxAskBid():
         elif data:
             return data[0]
 
-    def _post_message_handler(self, data: dict) -> None | dict:
-        # previous_ask_bid = self._previous_ask_bid.get(data['instId'])
-        # if previous_ask_bid:
-        #     if previous_ask_bid[0] == data['askPx'] and previous_ask_bid[1] == data['bidPx']:
-        #         return
-        # self._previous_ask_bid[data['instId']] = [data['askPx'], data['bidPx']]
+    def _post_message_handler(self, data: dict) -> dict:
         keys = ['instId', 'askPx', 'askSz', 'bidPx', 'bidSz', 'last', 'lastSz', 'ts']
-        return {k: v for k, v in data.items() if k in keys}
+        data = {k: v for k, v in data.items() if k in keys}
+        return data
 
     def init(self):
         self._connect()
@@ -274,11 +270,11 @@ class WebSocketBinaceAskBid(WebSocketOkxAskBid):
         return message
 
     def _post_message_handler(self, message: dict) -> None | dict:
-        previous_ask_bid = self._previous_ask_bid.get(message['s'])
+        previous_ask_bid = self._previous_ask_bid_data.get(message['s'])
         if previous_ask_bid:
             if previous_ask_bid[0] == message['a'] and previous_ask_bid[1] == message['b']:
                 return
-        self._previous_ask_bid[message['s']] = [message['a'], message['b']]
+        self._previous_ask_bid_data[message['s']] = [message['a'], message['b']]
         keys = ['s', 'b', 'B', 'a', 'A', 'E']
         return {k: v for k, v in message.items() if k in keys}
 

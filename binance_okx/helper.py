@@ -15,8 +15,10 @@ logger = logging.getLogger(__name__)
 
 
 class Calculator():
-    def get_sz(self, quote_coin: float, symbol: OkxSymbol) -> float:
-        contract_count = (quote_coin / symbol.market_price) / symbol.ct_val
+    def get_sz(self, symbol: OkxSymbol, quote_coin: float, price: float = None) -> float:
+        if not price:
+            price = symbol.market_price
+        contract_count = (quote_coin / price) / symbol.ct_val
         if contract_count < symbol.lot_sz:
             return symbol.lot_sz
         sz = floor(contract_count / symbol.lot_sz) * symbol.lot_sz
@@ -26,7 +28,9 @@ class Calculator():
         base_coin = sz * contract_value
         return base_coin
 
-    def get_usdt_from_sz(self, sz: float, symbol: OkxSymbol) -> float:
+    def get_usdt_from_sz(self, symbol: OkxSymbol, sz: float, price: float = None) -> float:
+        if not price:
+            price = symbol.market_price
         usdt = sz * symbol.market_price * symbol.ct_val
         return usdt
 

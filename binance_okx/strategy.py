@@ -5,7 +5,7 @@ from types import SimpleNamespace as Namespace
 from .models import Strategy, Symbol, Position
 from .helper import calc
 from .trade import OkxTrade, OkxEmulateTrade, get_take_profit_grid, get_stop_loss_breakeven
-from .helper import calculation_delta_and_points_for_entry, TaskLock, calc
+from .helper import calculation_delta_and_points_for_entry, TaskLock
 from .exceptions import PlaceOrderException
 
 
@@ -105,27 +105,40 @@ def fill_position_data(strategy: Strategy, position: Position, prices: dict, pri
     return position
 
 
-def get_position_size(strategy: Strategy, symbol: Symbol, position_side: str, prices: dict) -> None:
+def get_pre_enter_data(strategy: Strategy, symbol: Symbol, position_side: str, prices: dict) -> tuple:
     if position_side == 'long':
         sz = prices['okx_last_ask_size']
+        price = prices['okx_last_ask']
     elif position_side == 'short':
         sz = prices['okx_last_bid_size']
-    size_usdt = calc.get_usdt_from_sz(sz, symbol.okx)
-    if size_usdt < strategy.position_size:
-        logger.warning(f'Not enough liquidity, open position for {sz=}, {size_usdt=}', extra=strategy.extra_log)
-        position_size = size_usdt
+        price = prices['okx_last_bid']
+    logger.info(f'Get pre-enter data {sz=} {price=}', extra=strategy.extra_log)
+    sz_from_admin = calc.get_sz(symbol.okx, strategy.position_size, price)
+    if sz < sz_from_admin:
+        size_contract = sz
+        size_usdt = calc.get_usdt_from_sz(symbol.okx, sz, price)
+        logger.warning(
+            f'Not enough liquidity, open position for {size_contract=}, {size_usdt=}',
+            extra=strategy.extra_log
+        )
     else:
-        position_size = strategy.position_size
-        logger.info(f'Liquidity is enough, open position with admin {position_size=}', extra=strategy.extra_log)
-    return position_size
+        size_contract = sz_from_admin
+        size_usdt = strategy.position_size
+        logger.info(
+            f'Liquidity is enough, open position for {size_contract=} {size_usdt=}',
+            extra=strategy.extra_log
+        )
+    return price, size_contract, size_usdt
 
 
 def open_emulate_position(strategy: Strategy, symbol: Symbol, position_side: str, prices: dict) -> None:
     if not check_funding_time(strategy, symbol, position_side):
         return
     trade = OkxEmulateTrade(strategy, symbol)
-    position_size = get_position_size(strategy, symbol, position_side, prices)
-    position = trade.create_position(position_size, position_side, prices['date_time_last_prices'])
+    open_price, size_contract, size_usdt = get_pre_enter_data(strategy, symbol, position_side, prices)
+    position = trade.create_position(
+        open_price, size_contract, size_usdt, position_side, prices['date_time_last_prices']
+    )
     fill_position_data(strategy, position, prices, prices)
 
 
@@ -133,17 +146,17 @@ def open_trade_position(strategy: Strategy, symbol: Symbol, position_side: str, 
     if not check_funding_time(strategy, symbol, position_side):
         TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}').release()
         return
-    position_size = get_position_size(strategy, symbol, position_side, prices)
-    trade = OkxTrade(strategy, symbol, position_size, position_side)
+    _, size_contract, size_usdt = get_pre_enter_data(strategy, symbol, position_side, prices)
+    trade = OkxTrade(strategy, symbol, size_contract, position_side)
     trade.open_position()
 
 
 def increase_trade_position(strategy: Strategy, position: Position, prices: dict) -> None:
     if not position.sl_tp_data['increased_position'] and position.sl_tp_data['stop_loss_breakeven_order_id']:
-        position_size = get_position_size(strategy, position.symbol, position.side, prices)
+        _, size_contract, size_usdt = get_pre_enter_data(strategy, position.symbol, position.side, prices)
         position.sl_tp_data['increased_position'] = True
         position.save(update_fields=['sl_tp_data'])
-        trade = OkxTrade(strategy, position.symbol, position_size, position.side)
+        trade = OkxTrade(strategy, position.symbol, size_contract, position.side)
         trade.open_position(increase=True)
     else:
         logger.warning('Not all conditions are met to increase the position', extra=strategy.extra_log)
@@ -164,20 +177,21 @@ def place_orders_after_open_trade_position(position: Position) -> None:
         prices_entry = calculation_delta_and_points_for_entry(symbol, position.side, prices)
         position = fill_position_data(strategy, position, prices, prices_entry)
         sl_tp_data = Namespace(**position.sl_tp_data)
-        trade = OkxTrade(strategy, symbol, position.size_usdt, position.side)
+        trade = OkxTrade(strategy, symbol, position.sz, position.side)
         if strategy.stop_loss:
-            order_id = trade.place_stop_loss(price=sl_tp_data.stop_loss_price, sz=position.position_data['pos'])
+            order_id = trade.place_stop_loss(price=sl_tp_data.stop_loss_price)
             position.sl_tp_data['stop_loss_order_id'] = int(order_id)
             position.save(update_fields=['sl_tp_data'])
         if strategy.close_position_parts:
             if strategy.close_position_type == 'limit':
-                order_id, size_usdt, sz = trade.place_limit_order(sl_tp_data.tp_first_price, sl_tp_data.tp_first_part)
+                order_id = trade.place_limit_order(sl_tp_data.tp_first_price, sl_tp_data.tp_first_part)
                 position.sl_tp_data['tp_first_limit_order_id'] = int(order_id)
                 position.save(update_fields=['sl_tp_data'])
                 logger.debug(f'Save limit {order_id=} for first part', extra=strategy.extra_log)
-                order_id, size_usdt, sz = trade.place_limit_order(sl_tp_data.tp_second_price, sz=position.sz - sz)
+                order_id = trade.place_limit_order(
+                    sl_tp_data.tp_second_price, position.sz - sl_tp_data.tp_first_part
+                )
                 position.sl_tp_data['tp_second_limit_order_id'] = int(order_id)
-                position.sl_tp_data['tp_second_part'] = size_usdt
                 position.save(update_fields=['sl_tp_data'])
                 logger.debug(f'Save limit {order_id=} for second part', extra=strategy.extra_log)
         else:
@@ -185,7 +199,7 @@ def place_orders_after_open_trade_position(position: Position) -> None:
                 if strategy.close_position_type == 'market':
                     trade.update_take_profit(sl_tp_data.take_profit_price)
                 if strategy.close_position_type == 'limit':
-                    trade.place_limit_order(sl_tp_data.take_profit_price, sz=position.sz)
+                    trade.place_limit_order(sl_tp_data.take_profit_price, position.sz)
     except PlaceOrderException as e:
         logger.error(e, extra=strategy.extra_log)
         trade.close_entire_position()
@@ -193,33 +207,45 @@ def place_orders_after_open_trade_position(position: Position) -> None:
         TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}').release()
 
 
-def place_orders_after_increase_trade_position(position: Position) -> None:
+def calc_tp_and_place_orders_after_increase_trade_position(position: Position) -> None:
     try:
         strategy = position.strategy
-        if strategy.close_position_parts and strategy.close_position_type == 'limit':
-            position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
-            logger.info('Placing limits orders after increasing position', extra=position.strategy.extra_log)
-            symbol = position.symbol
-            entry_price = position.entry_price
-            prices = cache.get(f'ask_bid_prices_{symbol}')
-            if not prices:
-                logger.error('Prices not found in cache', extra=strategy.extra_log)
-                return
-            cache.delete(f'ask_bid_prices_{symbol}')
-            take_profit_grid = get_take_profit_grid(
-                position, entry_price, prices['spread_percent'], position.side
+        symbol = position.symbol
+        position.strategy._extra_log.update(symbol=symbol, position=position.id)
+        logger.info(
+            'Calculating take profit grid after increasing position',
+            extra=strategy.extra_log
+        )
+        entry_price = position.entry_price
+        prices = cache.get(f'ask_bid_prices_{symbol}')
+        if not prices:
+            logger.error('Prices not found in cache', extra=strategy.extra_log)
+            return
+        cache.delete(f'ask_bid_prices_{symbol}')
+        take_profit_grid = get_take_profit_grid(
+            position, entry_price, prices['spread_percent'], position.side
+        )
+        trade = OkxTrade(strategy, symbol, position.sz, position.side)
+        position.sl_tp_data['tp_third_price'] = take_profit_grid['tp_first_price']
+        position.sl_tp_data['tp_third_part'] = take_profit_grid['tp_first_part']
+        position.sl_tp_data['tp_fourth_price'] = take_profit_grid['tp_second_price']
+        position.sl_tp_data['tp_fourth_part'] = take_profit_grid['tp_second_part']
+        position.save(update_fields=['sl_tp_data'])
+        if strategy.close_position_type == 'limit':
+            logger.info(
+                'Placing limits orders after increasing position',
+                extra=position.strategy.extra_log
             )
-            trade = OkxTrade(strategy, symbol, position.size_usdt, position.side)
-            position.sl_tp_data['tp_third_price'] = take_profit_grid['tp_first_price']
-            position.sl_tp_data['tp_third_part'] = take_profit_grid['tp_first_part']
-            position.sl_tp_data['tp_fourth_price'] = take_profit_grid['tp_second_price']
-            # position.sl_tp_data['tp_fourth_part'] = take_profit_grid['tp_second_part']
-            order_id, size_usdt, sz = trade.place_limit_order(take_profit_grid['tp_first_price'], take_profit_grid['tp_first_part'])
+            order_id = trade.place_limit_order(
+                take_profit_grid['tp_first_price'], take_profit_grid['tp_first_part']
+            )
             position.sl_tp_data['tp_third_limit_order_id'] = int(order_id)
             logger.debug(f'Save limit {order_id=} for third part', extra=strategy.extra_log)
-            order_id, size_usdt, sz = trade.place_limit_order(take_profit_grid['tp_second_price'], sz=position.sz - sz)
+            order_id = trade.place_limit_order(
+                take_profit_grid['tp_second_price'],
+                position.sz - take_profit_grid['tp_first_part']
+            )
             position.sl_tp_data['tp_fourth_limit_order_id'] = int(order_id)
-            position.sl_tp_data['tp_fourth_part'] = size_usdt
             logger.debug(f'Save limit {order_id=} for fourth part', extra=strategy.extra_log)
             position.save(update_fields=['sl_tp_data'])
     except PlaceOrderException as e:

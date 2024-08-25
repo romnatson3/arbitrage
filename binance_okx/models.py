@@ -1,5 +1,6 @@
 import logging
 import json
+from django_redis import get_redis_connection
 from datetime import datetime
 from django.utils import timezone
 import okx.PublicData as PublicData
@@ -8,6 +9,9 @@ from django.db.models import QuerySet
 from django.core.cache import cache
 from django.contrib.auth.models import AbstractUser
 from django_celery_beat.models import PeriodicTask, IntervalSchedule
+
+
+connection = get_redis_connection('default')
 
 
 class BaseModel(models.Model):
@@ -127,6 +131,33 @@ class OkxSymbol(BaseModel):
     @property
     def market_price(self) -> float:
         return cache.get(f'okx_market_price_{self.symbol}', 0.0)
+
+    @property
+    def ask_price(self) -> float:
+        key = f'okx_ask_bid_{self.symbol}'
+        last_record = connection.zrange(key, -1, -1)
+        if last_record:
+            data = json.loads(last_record[0])
+            return data['ask_price']
+        return 0.0
+
+    @property
+    def bid_price(self) -> float:
+        key = f'okx_ask_bid_{self.symbol}'
+        last_record = connection.zrange(key, -1, -1)
+        if last_record:
+            data = json.loads(last_record[0])
+            return data['bid_price']
+        return 0.0
+
+    @property
+    def last_price_and_size(self) -> tuple:
+        key = f'okx_last_price_{self.symbol}'
+        last_record = connection.zrange(key, -1, -1)
+        if last_record:
+            data = json.loads(last_record[0])
+            return data['last_price'], data['last_size']
+        return 0.0, 0.0
 
     @property
     def funding_time(self) -> datetime:
