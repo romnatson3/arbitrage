@@ -22,12 +22,12 @@ from .strategy import (
 )
 from .ws import (
     WebSocketOkxAskBid, WebSocketBinaceAskBid, WebSocketOkxOrders,
-    WebSocketOkxMarketPrice, WebSocketOkxPositions
+    WebSocketOkxMarketPrice, WebSocketOkxPositions, WebSocketOkxLastPrice
 )
 from .handlers import (
     write_ask_bid_to_csv_and_cache_by_symbol, save_okx_ask_bid_to_cache,
     save_okx_market_price_to_cache, orders_handler, closing_position_by_market,
-    save_okx_last_price_and_size_to_cache
+    closing_position_by_limit
 )
 from .trade import OkxTrade, OkxEmulateTrade
 
@@ -387,6 +387,35 @@ def run_websocket_okx_orders() -> None:
 ws_okx_ask_bid = WebSocketOkxAskBid()
 ws_binance_ask_bid = WebSocketBinaceAskBid()
 ws_okx_market_price = WebSocketOkxMarketPrice()
+ws_okx_last_price = WebSocketOkxLastPrice()
+
+
+@app.task
+def run_websocket_okx_last_price() -> None:
+    try:
+        with TaskLock('task_run_websocket_okx_last_price'):
+            ws_okx_last_price.threads.update(
+                (i.name, i) for i in threading.enumerate()
+                if i.name in ws_okx_last_price.threads
+            )
+            for thread in ws_okx_last_price.threads.values():
+                if not thread or not thread.is_alive():
+                    logger.warning(f'Thread "{thread}" is not running')
+                    ws_okx_last_price.kill()
+                    break
+            else:
+                logger.debug(f'{ws_okx_last_price.name} all threads are running')
+                return
+            ws_okx_last_price.start()
+            # ws_okx_last_price.add_handler(
+            #     lambda data: closing_position_by_limit.delay(data)
+            # )
+            time.sleep(3)
+    except AcquireLockException:
+        logger.debug('Task run_websocket_okx_last_price is now running')
+    except Exception as e:
+        logger.exception(e)
+        raise e
 
 
 @app.task
@@ -433,7 +462,6 @@ def run_websocket_okx_ask_bid() -> None:
                 return
             ws_okx_ask_bid.start()
             ws_okx_ask_bid.add_handler(save_okx_ask_bid_to_cache)
-            ws_okx_ask_bid.add_handler(save_okx_last_price_and_size_to_cache)
             ws_okx_ask_bid.add_handler(closing_position_by_market)
             time.sleep(3)
     except AcquireLockException:

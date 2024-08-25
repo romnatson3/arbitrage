@@ -179,7 +179,7 @@ def place_orders_after_open_trade_position(position: Position) -> None:
         sl_tp_data = Namespace(**position.sl_tp_data)
         trade = OkxTrade(strategy, symbol, position.sz, position.side)
         if strategy.stop_loss:
-            order_id = trade.place_stop_loss(price=sl_tp_data.stop_loss_price)
+            order_id = trade.place_stop_loss(price=sl_tp_data.stop_loss_price, sz=position.sz)
             position.sl_tp_data['stop_loss_order_id'] = int(order_id)
             position.save(update_fields=['sl_tp_data'])
         if strategy.close_position_parts:

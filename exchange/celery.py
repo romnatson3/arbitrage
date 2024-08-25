@@ -29,13 +29,18 @@ app.conf.update(
         'binance_okx.tasks.check_position_close_time': {'queue': 'positions'},
         'binance_okx.handlers.orders_handler': {'queue': 'positions'},
         'binance_okx.tasks.check_condition': {'queue': 'check_condition'},
-        'binance_okx.handlers.closing_trade_position_by_market': {'queue': 'market'},
-        'binance_okx.handlers.closing_emulate_position_by_market': {'queue': 'market'},
+        'binance_okx.handlers.closing_trade_position_market_parts': {'queue': 'market'},
+        'binance_okx.handlers.closing_emulate_position_market_stop_loss': {'queue': 'market'},
+        'binance_okx.handlers.closing_emulate_position_market_take_profit': {'queue': 'market'},
+        'binance_okx.handlers.closing_emulate_position_market_parts': {'queue': 'market'},
+        'binance_okx.handlers.closing_position_by_limit': {'queue': 'market'},
+        'binance_okx.handlers.closing_emulate_position_by_limit': {'queue': 'market'},
         'binance_okx.tasks.run_websocket_okx_orders': {'queue': 'websocket_okx_orders'},
         'binance_okx.tasks.run_websocket_okx_positions': {'queue': 'websocket_okx_positions'},
         'binance_okx.tasks.run_websocket_okx_ask_bid': {'queue': 'websocket_okx_ask_bid'},
         'binance_okx.tasks.run_websocket_binance_ask_bid': {'queue': 'websocket_binance_ask_bid'},
         'binance_okx.tasks.run_websocket_okx_market_price': {'queue': 'websocket_okx_market_price'},
+        'binance_okx.tasks.run_websocket_okx_last_price': {'queue': 'websocket_okx_last_price'},
     },
     beat_schedule={
         'run_websocket_okx_positions': {
@@ -44,6 +49,10 @@ app.conf.update(
         },
         'run_websocket_okx_ask_bid': {
             'task': 'binance_okx.tasks.run_websocket_okx_ask_bid',
+            'schedule': crontab(minute='*/1'),
+        },
+        'run_websocket_okx_last_price': {
+            'task': 'binance_okx.tasks.run_websocket_okx_last_price',
             'schedule': crontab(minute='*/1'),
         },
         'run_websocket_binance_ask_bid': {

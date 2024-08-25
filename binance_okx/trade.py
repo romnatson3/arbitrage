@@ -123,7 +123,7 @@ class OkxTrade():
             position_side = self.position_side
         orders = self.get_order_list()
         for order in orders:
-            self.cancel_order(symbol, order['ordId'])
+            self.cancel_order(order['ordId'], symbol)
         result = self.trade.close_positions(
             instId=symbol.inst_id,
             posSide=position_side,
@@ -280,13 +280,13 @@ class OkxTrade():
         logger.info(f'Got {len(orders)} orders, {orders_ids=}', extra=self.strategy.extra_log)
         return orders
 
-    def get_order(self, symbol: OkxSymbol, order_id: str) -> dict:
+    def get_order(self, order_id: str, symbol: OkxSymbol) -> dict:
         result = self.trade.get_order(instId=symbol.inst_id, ordId=order_id)
         if result['code'] != '0':
             raise GetOrderException(result)
         return convert_dict_values(result['data'][0])
 
-    def cancel_order(self, symbol: OkxSymbol, order_id: str) -> None:
+    def cancel_order(self, order_id: str, symbol: OkxSymbol) -> None:
         result = self.trade.cancel_order(instId=symbol.inst_id, ordId=order_id)
         if result['code'] != '0':
             raise CancelOrderException(result)
@@ -309,9 +309,9 @@ class OkxTrade():
     def update_stop_loss(
         self,
         price: float,
+        sz: int = None,
         symbol: OkxSymbol = None,
-        position_side: str = None,
-        sz: int = None
+        position_side: str = None
     ) -> str:
         if not symbol:
             symbol = self.symbol_okx
@@ -319,7 +319,7 @@ class OkxTrade():
             position_side = self.position_side
         algo_id = self.get_algo_order_id()
         if not algo_id:
-            algo_id = self.place_stop_loss(price, symbol, position_side, sz)
+            algo_id = self.place_stop_loss(price, sz, symbol, position_side)
             return algo_id
         parameters = dict(
             instId=symbol.inst_id,
@@ -503,13 +503,14 @@ def get_take_profit_grid(position: Position, entry_price: float, spread_percent:
         )
     tp_first_part = position.sz * strategy.tp_first_part_percent / 100
     tp_first_part = round(floor(tp_first_part / lot_sz) * lot_sz, 2)
-    strategy.tp_second_part_percent = 100 - strategy.tp_first_part_percent
-    tp_second_part = position.sz * strategy.tp_second_part_percent / 100
+    # strategy.tp_second_part_percent = 100 - strategy.tp_first_part_percent
+    # tp_second_part = position.sz * strategy.tp_second_part_percent / 100
+    tp_second_part = position.sz - tp_first_part
     tp_second_part = round(floor(tp_second_part / lot_sz) * lot_sz, 2)
     return dict(
-        tp_first_price=round(tp_first_price, 10),
+        tp_first_price=round(tp_first_price, 2),
         tp_first_part=tp_first_part,
-        tp_second_price=round(tp_second_price, 10),
+        tp_second_price=round(tp_second_price, 2),
         tp_second_part=tp_second_part
     )
 
@@ -523,4 +524,4 @@ def get_stop_loss_breakeven(entry_price: float, fee_percent: float, spread_perce
         stop_loss_price = (
             entry_price * (1 - (fee_percent + spread_percent) / 100)
         )
-    return round(stop_loss_price, 5)
+    return round(stop_loss_price, 2)

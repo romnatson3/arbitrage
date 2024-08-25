@@ -110,30 +110,30 @@ def save_okx_ask_bid_to_cache(data: dict) -> None:
     pipeline.execute()
 
 
-def save_okx_last_price_and_size_to_cache(data: dict) -> None:
-    symbol = ''.join(data['instId'].split('-')[:2])
-    key = f'okx_last_price_{symbol}'
-    timestamp = int(data['ts'])
-    date_time = datetime.fromtimestamp(timestamp / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
-    last_price = float(data['last'])
-    last_size = float(data['lastSz'])
-    last_record = connection.zrange(key, -1, -1)
-    if last_record:
-        last_record = json.loads(last_record[0])
-        if last_record['last_size'] == last_size:
-            return
-    data = json.dumps(dict(
-        symbol=symbol,
-        last_price=last_price,
-        last_size=last_size,
-        timestamp=timestamp,
-        date_time=date_time
-    ))
-    one_minute_ago = timestamp - 60000
-    pipeline = connection.pipeline()
-    pipeline.execute_command('zadd', key, timestamp, data)
-    pipeline.execute_command('zremrangebyscore', key, 0, one_minute_ago)
-    pipeline.execute()
+# def save_okx_last_price_and_size_to_cache(data: dict) -> None:
+#     symbol = ''.join(data['instId'].split('-')[:2])
+#     key = f'okx_last_price_{symbol}'
+#     timestamp = int(data['ts'])
+#     date_time = datetime.fromtimestamp(timestamp / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
+#     last_price = float(data['last'])
+#     last_size = float(data['lastSz'])
+#     last_record = connection.zrange(key, -1, -1)
+#     if last_record:
+#         last_record = json.loads(last_record[0])
+#         if last_record['last_size'] == last_size and last_record['last_price'] == last_price:
+#             return
+#     data = json.dumps(dict(
+#         symbol=symbol,
+#         last_price=last_price,
+#         last_size=last_size,
+#         timestamp=timestamp,
+#         date_time=date_time
+#     ))
+#     one_minute_ago = timestamp - 60000
+#     pipeline = connection.pipeline()
+#     pipeline.execute_command('zadd', key, timestamp, data)
+#     pipeline.execute_command('zremrangebyscore', key, 0, one_minute_ago)
+#     pipeline.execute()
 
 
 @app.task
@@ -185,7 +185,9 @@ def orders_handler(data: dict) -> None:
                     )
                     if strategy.stop_loss_breakeven and not sl_tp_data.stop_loss_breakeven_order_id:
                         trade = OkxTrade(strategy, position.symbol, position.sz, position.side)
-                        order_id = trade.update_stop_loss(price=sl_tp_data.stop_loss_breakeven)
+                        order_id = trade.update_stop_loss(
+                            price=sl_tp_data.stop_loss_breakeven, sz=position.sz
+                        )
                         logger.info(
                             f'Updated stop loss to breakeven {sl_tp_data.stop_loss_breakeven}, {order_id=}',
                             extra=strategy.extra_log
@@ -258,171 +260,105 @@ def closing_position_by_market(data: dict) -> None:
             if strategy.mode == Strategy.Mode.trade:
                 if strategy.close_position_type == 'market':
                     if strategy.close_position_parts:
-                        closing_trade_position_by_market.delay(
+                        closing_trade_position_market_parts.delay(
                             strategy.id, symbol, ask_price, bid_price
                         )
             elif strategy.mode == Strategy.Mode.emulate:
                 if strategy.stop_loss:
-                    closing_emulate_position_stop_loss.delay(
+                    closing_emulate_position_market_stop_loss.delay(
                         strategy.id, symbol, ask_price, bid_price, date_time
                     )
                 if strategy.close_position_parts:
                     if strategy.close_position_type == 'market':
-                        closing_emulate_position_by_market.delay(
+                        closing_emulate_position_market_parts.delay(
                             strategy.id, symbol, ask_price, bid_price, date_time
                         )
                 else:
                     if strategy.target_profit:
-                        closing_emulate_position_take_profit.delay(
+                        closing_emulate_position_market_take_profit.delay(
                             strategy.id, symbol, ask_price, bid_price, date_time
                         )
     except Exception as e:
         logger.exception(e)
-
-
-# @app.task
-# def closing_emulate_position_by_limit(
-#     strategy_id: int, symbol: str, last_price: float, last_size: float, date_time: str
-# ) -> None:
-#     try:
-#         strategy = Strategy.objects.cache(id=strategy_id)[0]
-#         strategy._extra_log.update(symbol=symbol)
-#         position = strategy.get_last_emulate_open_position(symbol)
-#         if position and any(position.sl_tp_data.values()):
-#             strategy = position.strategy
-#             strategy._extra_log.update(position=position.id)
-#             trade = OkxEmulateTrade(strategy, position.symbol)
-#             sl_tp_data = Namespace(**position.sl_tp_data)
-#     except Exception as e:
-#         logger.exception(e, extra=strategy.extra_log)
-#         raise e
+        raise e
 
 
 @app.task
-def closing_trade_position_by_market(
-    strategy_id: int, symbol: str, ask_price: float, bid_price: float
+def closing_position_by_limit(data: dict) -> None:
+    try:
+        symbol = ''.join(data['instId'].split('-')[:-1])
+        timestamp = int(data['ts'])
+        date_time = datetime.fromtimestamp(timestamp / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
+        last_price = float(data['last'])
+        last_size = float(data['lastSz'])
+        strategies = Strategy.objects.cache(symbols__symbol=symbol, enabled=True)
+        for strategy in strategies:
+            if strategy.mode == Strategy.Mode.emulate and strategy.close_position_type == 'limit':
+                closing_emulate_position_by_limit.delay(
+                    strategy.id, symbol, last_price, last_size, date_time
+                )
+    except Exception as e:
+        logger.exception(e)
+        raise e
+
+
+@app.task
+def closing_emulate_position_by_limit(
+        strategy_id: int, symbol: str, last_price: float, last_size: float, date_time: str
 ) -> None:
     try:
         strategy = Strategy.objects.cache(id=strategy_id)[0]
         strategy._extra_log.update(symbol=symbol)
-        with TaskLock(f'closing_trade_position_by_market_{strategy_id}_{symbol}'):
-            position = strategy.get_last_trade_open_position(symbol)
-            if position and any(position.sl_tp_data.values()):
-                sl_tp_data = Namespace(**position.sl_tp_data)
-                strategy = position.strategy
-                strategy._extra_log.update(position=position.id)
-                trade = OkxTrade(strategy, position.symbol, position.sz, position.side)
-                if not sl_tp_data.first_part_closed:
-                    if position.side == 'long' and bid_price >= sl_tp_data.tp_first_price:
-                        logger.info(
-                            'First take profit price '
-                            f'{sl_tp_data.tp_first_price} reached {bid_price=}',
+        position = strategy.get_last_emulate_open_position(symbol)
+        if position and any(position.sl_tp_data.values()):
+            strategy = position.strategy
+            strategy._extra_log.update(position=position.id)
+            trade = OkxEmulateTrade(strategy, position.symbol)
+            sl_tp_data = Namespace(**position.sl_tp_data)
+            bid_price = position.symbol.okx.bid_price
+            ask_price = position.symbol.okx.ask_price
+            if strategy.close_position_parts:
+                ...
+            else:
+                if strategy.target_profit:
+                    if last_price == sl_tp_data.take_profit_price:
+                        logger.debug(
+                            f'Last price {last_price} is equal to take_profit_price={sl_tp_data.take_profit_price}',
                             extra=strategy.extra_log
                         )
-                        position.sl_tp_data['first_part_closed'] = True
-                    if position.side == 'short' and ask_price <= sl_tp_data.tp_first_price:
-                        logger.info(
-                            'First take profit price '
-                            f'{sl_tp_data.tp_first_price} reached {ask_price=}',
-                            extra=strategy.extra_log
-                        )
-                        position.sl_tp_data['first_part_closed'] = True
-                    if position.sl_tp_data['first_part_closed']:
-                        position.save(update_fields=['sl_tp_data'])
-                        trade.close_position(sl_tp_data.tp_first_part)
-                        logger.info(
-                            f'First part of position is closed, size_contract={sl_tp_data.tp_first_part}',
-                            extra=strategy.extra_log
-                        )
-                        if strategy.stop_loss_breakeven and not sl_tp_data.stop_loss_breakeven_order_id:
-                            order_id = trade.update_stop_loss(price=sl_tp_data.stop_loss_breakeven)
+                        key = f'emulate_position_total_last_size_{position.id}_{symbol}'
+                        total_last_size = cache.get(key, 0)
+                        total_last_size += last_size
+                        if total_last_size >= position.sz:
+                            cache.delete(key)
                             logger.info(
-                                'Updated stop loss to breakeven '
-                                f'{sl_tp_data.stop_loss_breakeven}, {order_id=}',
+                                f'Total last size {total_last_size} is greater than position size {position.sz}',
                                 extra=strategy.extra_log
                             )
-                            position.sl_tp_data['stop_loss_breakeven_order_id'] = order_id
-                            position.save(update_fields=['sl_tp_data'])
-                elif not sl_tp_data.second_part_closed:
-                    if position.side == 'long' and bid_price >= sl_tp_data.tp_second_price:
-                        logger.info(
-                            'Second take profit price '
-                            f'{sl_tp_data.tp_second_price} reached {bid_price=}',
-                            extra=strategy.extra_log
-                        )
-                        position.sl_tp_data['second_part_closed'] = True
-                    if position.side == 'short' and ask_price <= sl_tp_data.tp_second_price:
-                        logger.info(
-                            'Second take profit price '
-                            f'{sl_tp_data.tp_second_price} reached {ask_price=}',
-                            extra=strategy.extra_log
-                        )
-                        position.sl_tp_data['second_part_closed'] = True
-                    if position.sl_tp_data['second_part_closed']:
-                        trade.close_position(sl_tp_data.tp_second_part)
-                        logger.info(
-                            f'Second part of position is closed, size_contract={sl_tp_data.tp_second_part}',
-                            extra=strategy.extra_log
-                        )
-                        position.save(update_fields=['sl_tp_data'])
-                if sl_tp_data.increased_position:
-                    if not sl_tp_data.third_part_closed:
-                        if position.side == 'long' and bid_price >= sl_tp_data.tp_third_price:
+                            close_price = None
+                            if position.side == 'long' and bid_price >= sl_tp_data.take_profit_price:
+                                close_price = bid_price
+                            if position.side == 'short' and ask_price <= sl_tp_data.take_profit_price:
+                                close_price = ask_price
+                            if close_price:
+                                logger.info(
+                                    f'Take profit price {sl_tp_data.take_profit_price} reached {close_price=}',
+                                    extra=strategy.extra_log
+                                )
+                                trade.close_position(position, close_price, date_time=date_time, completely=True)
+                        else:
+                            cache.set(key, total_last_size)
                             logger.info(
-                                'Third take profit price '
-                                f'{sl_tp_data.tp_third_price} reached {bid_price=}',
+                                f'Total last size {total_last_size} is less than position size {position.sz}',
                                 extra=strategy.extra_log
                             )
-                            position.sl_tp_data['third_part_closed'] = True
-                        if position.side == 'short' and ask_price <= sl_tp_data.tp_third_price:
-                            logger.info(
-                                'Third take profit price '
-                                f'{sl_tp_data.tp_third_price} reached {ask_price=}',
-                                extra=strategy.extra_log
-                            )
-                            position.sl_tp_data['third_part_closed'] = True
-                        if position.sl_tp_data['third_part_closed']:
-                            trade.close_position(sl_tp_data.tp_third_part)
-                            logger.info(
-                                f'Third part of position is closed, size_contract={sl_tp_data.tp_third_part}',
-                                extra=strategy.extra_log
-                            )
-                            position.save(update_fields=['sl_tp_data'])
-                    elif not sl_tp_data.fourth_part_closed:
-                        if position.side == 'long' and bid_price >= sl_tp_data.tp_fourth_price:
-                            logger.info(
-                                'Fourth take profit price '
-                                f'{sl_tp_data.tp_fourth_price} reached {bid_price=}',
-                                extra=strategy.extra_log
-                            )
-                            position.sl_tp_data['fourth_part_closed'] = True
-                        if position.side == 'short' and ask_price <= sl_tp_data.tp_fourth_price:
-                            logger.info(
-                                'Fourth take profit price '
-                                f'{sl_tp_data.tp_fourth_price} reached {ask_price=}',
-                                extra=strategy.extra_log
-                            )
-                            position.sl_tp_data['fourth_part_closed'] = True
-                        if position.sl_tp_data['fourth_part_closed']:
-                            trade.close_position(sl_tp_data.tp_fourth_part)
-                            logger.info(
-                                f'Fourth part of position is closed, size_contract={sl_tp_data.tp_fourth_part}',
-                                extra=strategy.extra_log
-                            )
-                            position.save(update_fields=['sl_tp_data'])
-    except AcquireLockException:
-        # logger.debug(
-        #     'Task closing_trade_position_by_market is still running',
-        #     extra=strategy.extra_log
-        # )
-        pass
     except Exception as e:
         logger.exception(e, extra=strategy.extra_log)
         raise e
 
 
 @app.task
-def closing_emulate_position_stop_loss(
+def closing_emulate_position_market_stop_loss(
     strategy_id: int, symbol: str, ask_price: float, bid_price: float, date_time: str
 ) -> None:
     try:
@@ -451,7 +387,7 @@ def closing_emulate_position_stop_loss(
 
 
 @app.task
-def closing_emulate_position_take_profit(
+def closing_emulate_position_market_take_profit(
     strategy_id: int, symbol: str, ask_price: float, bid_price: float, date_time: str
 ) -> None:
     try:
@@ -480,7 +416,7 @@ def closing_emulate_position_take_profit(
 
 
 @app.task
-def closing_emulate_position_by_market(
+def closing_emulate_position_market_parts(
     strategy_id: int, symbol: str, ask_price: float, bid_price: float, date_time: str
 ) -> None:
     try:
@@ -529,6 +465,134 @@ def closing_emulate_position_by_market(
                     )
             else:
                 logger.warning('All parts of position are closed', extra=strategy.extra_log)
+    except Exception as e:
+        logger.exception(e, extra=strategy.extra_log)
+        raise e
+
+
+@app.task
+def closing_trade_position_market_parts(
+    strategy_id: int, symbol: str, ask_price: float, bid_price: float
+) -> None:
+    try:
+        strategy = Strategy.objects.cache(id=strategy_id)[0]
+        strategy._extra_log.update(symbol=symbol)
+        with TaskLock(f'closing_trade_position_market_parts_{strategy_id}_{symbol}'):
+            position = strategy.get_last_trade_open_position(symbol)
+            if position and any(position.sl_tp_data.values()):
+                sl_tp_data = Namespace(**position.sl_tp_data)
+                strategy = position.strategy
+                strategy._extra_log.update(position=position.id)
+                trade = OkxTrade(strategy, position.symbol, position.sz, position.side)
+                if not sl_tp_data.first_part_closed:
+                    if position.side == 'long' and bid_price >= sl_tp_data.tp_first_price:
+                        logger.info(
+                            'First take profit price '
+                            f'{sl_tp_data.tp_first_price} reached {bid_price=}',
+                            extra=strategy.extra_log
+                        )
+                        position.sl_tp_data['first_part_closed'] = True
+                    if position.side == 'short' and ask_price <= sl_tp_data.tp_first_price:
+                        logger.info(
+                            'First take profit price '
+                            f'{sl_tp_data.tp_first_price} reached {ask_price=}',
+                            extra=strategy.extra_log
+                        )
+                        position.sl_tp_data['first_part_closed'] = True
+                    if position.sl_tp_data['first_part_closed']:
+                        position.save(update_fields=['sl_tp_data'])
+                        trade.close_position(sl_tp_data.tp_first_part)
+                        logger.info(
+                            f'First part of position is closed, size_contract={sl_tp_data.tp_first_part}',
+                            extra=strategy.extra_log
+                        )
+                        if strategy.stop_loss_breakeven and not sl_tp_data.stop_loss_breakeven_order_id:
+                            order_id = trade.update_stop_loss(
+                                price=sl_tp_data.stop_loss_breakeven,
+                                sz=position.sz
+                            )
+                            logger.info(
+                                'Updated stop loss to breakeven '
+                                f'{sl_tp_data.stop_loss_breakeven}, {order_id=}',
+                                extra=strategy.extra_log
+                            )
+                            position.sl_tp_data['stop_loss_breakeven_order_id'] = order_id
+                            position.save(update_fields=['sl_tp_data'])
+                elif not sl_tp_data.second_part_closed:
+                    if position.side == 'long' and bid_price >= sl_tp_data.tp_second_price:
+                        logger.info(
+                            'Second take profit price '
+                            f'{sl_tp_data.tp_second_price} reached {bid_price=}',
+                            extra=strategy.extra_log
+                        )
+                        position.sl_tp_data['second_part_closed'] = True
+                    if position.side == 'short' and ask_price <= sl_tp_data.tp_second_price:
+                        logger.info(
+                            'Second take profit price '
+                            f'{sl_tp_data.tp_second_price} reached {ask_price=}',
+                            extra=strategy.extra_log
+                        )
+                        position.sl_tp_data['second_part_closed'] = True
+                    if position.sl_tp_data['second_part_closed']:
+                        if sl_tp_data.increased_position:
+                            trade.close_position(sl_tp_data.tp_second_part)
+                        else:
+                            trade.close_position(position.sz)
+                        logger.info(
+                            f'Second part of position is closed, size_contract={sl_tp_data.tp_second_part}',
+                            extra=strategy.extra_log
+                        )
+                        position.save(update_fields=['sl_tp_data'])
+                elif sl_tp_data.increased_position and not sl_tp_data.third_part_closed:
+                    if position.side == 'long' and bid_price >= sl_tp_data.tp_third_price:
+                        logger.info(
+                            'Third take profit price '
+                            f'{sl_tp_data.tp_third_price} reached {bid_price=}',
+                            extra=strategy.extra_log
+                        )
+                        position.sl_tp_data['third_part_closed'] = True
+                    if position.side == 'short' and ask_price <= sl_tp_data.tp_third_price:
+                        logger.info(
+                            'Third take profit price '
+                            f'{sl_tp_data.tp_third_price} reached {ask_price=}',
+                            extra=strategy.extra_log
+                        )
+                        position.sl_tp_data['third_part_closed'] = True
+                    if position.sl_tp_data['third_part_closed']:
+                        trade.close_position(sl_tp_data.tp_third_part)
+                        logger.info(
+                            f'Third part of position is closed, size_contract={sl_tp_data.tp_third_part}',
+                            extra=strategy.extra_log
+                        )
+                        position.save(update_fields=['sl_tp_data'])
+                elif sl_tp_data.increased_position and not sl_tp_data.fourth_part_closed:
+                    if position.side == 'long' and bid_price >= sl_tp_data.tp_fourth_price:
+                        logger.info(
+                            'Fourth take profit price '
+                            f'{sl_tp_data.tp_fourth_price} reached {bid_price=}',
+                            extra=strategy.extra_log
+                        )
+                        position.sl_tp_data['fourth_part_closed'] = True
+                    if position.side == 'short' and ask_price <= sl_tp_data.tp_fourth_price:
+                        logger.info(
+                            'Fourth take profit price '
+                            f'{sl_tp_data.tp_fourth_price} reached {ask_price=}',
+                            extra=strategy.extra_log
+                        )
+                        position.sl_tp_data['fourth_part_closed'] = True
+                    if position.sl_tp_data['fourth_part_closed']:
+                        trade.close_position(position.sz)
+                        logger.info(
+                            f'Fourth part of position is closed, size_contract={sl_tp_data.tp_fourth_part}',
+                            extra=strategy.extra_log
+                        )
+                        position.save(update_fields=['sl_tp_data'])
+    except AcquireLockException:
+        # logger.debug(
+        #     'Task closing_trade_position_market_parts is still running',
+        #     extra=strategy.extra_log
+        # )
+        pass
     except Exception as e:
         logger.exception(e, extra=strategy.extra_log)
         raise e

@@ -111,6 +111,7 @@ services:
       - websocket_okx_ask_bid
       - websocket_okx_positions
       - websocket_binance_ask_bid
+      - websocket_okx_last_price
     env_file:
       - .env
     networks:
@@ -229,6 +230,28 @@ services:
       driver: syslog
       options:
         tag: exchange_websocket_okx_orders
+        syslog-facility: local5
+
+  websocket_okx_last_price:
+    image: exchange:latest
+    entrypoint: celery -A exchange worker -c 1 -l INFO -Q websocket_okx_last_price
+    deploy:
+      mode: replicated
+      replicas: 1
+    restart: always
+    depends_on:
+      - rabbitmq
+      - redis
+      - postgres
+      - web
+    env_file:
+      - .env
+    networks:
+      - layer
+    logging:
+      driver: syslog
+      options:
+        tag: exchange_websocket_okx_last_price
         syslog-facility: local5
 
   websocket_okx_ask_bid:
