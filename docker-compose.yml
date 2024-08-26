@@ -207,7 +207,7 @@ services:
     logging:
       driver: syslog
       options:
-        tag: market
+        tag: exchange_market
         syslog-facility: local5
 
   websocket_okx_orders:

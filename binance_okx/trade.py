@@ -2,6 +2,7 @@ import logging
 import random
 import time
 from math import floor
+from decimal import Decimal, ROUND_DOWN
 from datetime import datetime
 from django.utils import timezone
 import okx.Trade as Trade
@@ -487,6 +488,7 @@ class OkxEmulateTrade():
 def get_take_profit_grid(position: Position, entry_price: float, spread_percent: float, position_side: str) -> dict:
     strategy = position.strategy
     lot_sz = position.symbol.okx.lot_sz
+    tick_size = position.symbol.okx.tick_size
     if position_side == 'long':
         tp_first_price = (
             entry_price * (1 + (strategy.tp_first_price_percent + strategy.open_plus_close_fee + spread_percent) / 100)
@@ -502,20 +504,27 @@ def get_take_profit_grid(position: Position, entry_price: float, spread_percent:
             entry_price * (1 - (strategy.tp_second_price_percent + strategy.open_plus_close_fee + spread_percent) / 100)
         )
     tp_first_part = position.sz * strategy.tp_first_part_percent / 100
-    tp_first_part = round(floor(tp_first_part / lot_sz) * lot_sz, 2)
+    # tp_first_part = round(floor(tp_first_part / lot_sz) * lot_sz, 2)
+    tp_first_part = float(Decimal(tp_first_part).quantize(Decimal(str(lot_sz)), rounding=ROUND_DOWN))
     # strategy.tp_second_part_percent = 100 - strategy.tp_first_part_percent
     # tp_second_part = position.sz * strategy.tp_second_part_percent / 100
     tp_second_part = position.sz - tp_first_part
-    tp_second_part = round(floor(tp_second_part / lot_sz) * lot_sz, 2)
+    # tp_second_part = round(floor(tp_second_part / lot_sz) * lot_sz, 2)
+    tp_second_part = float(Decimal(tp_second_part).quantize(Decimal(str(lot_sz)), rounding=ROUND_DOWN))
     return dict(
-        tp_first_price=round(tp_first_price, 2),
+        # tp_first_price=round(tp_first_price, 4),
+        tp_first_price=float(Decimal(tp_first_price).quantize(Decimal(str(tick_size)), rounding=ROUND_DOWN)),
         tp_first_part=tp_first_part,
-        tp_second_price=round(tp_second_price, 2),
+        # tp_second_price=round(tp_second_price, 4),
+        tp_second_price=float(Decimal(tp_second_price).quantize(Decimal(str(tick_size)), rounding=ROUND_DOWN)),
         tp_second_part=tp_second_part
     )
 
 
-def get_stop_loss_breakeven(entry_price: float, fee_percent: float, spread_percent: float, position_side: str):
+def get_stop_loss_breakeven(
+    symbol: OkxSymbol, entry_price: float, fee_percent: float,
+    spread_percent: float, position_side: str
+) -> float:
     if position_side == 'long':
         stop_loss_price = (
             entry_price * (1 + (fee_percent + spread_percent) / 100)
@@ -524,4 +533,9 @@ def get_stop_loss_breakeven(entry_price: float, fee_percent: float, spread_perce
         stop_loss_price = (
             entry_price * (1 - (fee_percent + spread_percent) / 100)
         )
-    return round(stop_loss_price, 2)
+    # return round(stop_loss_price, 4)
+    stop_loss_price = (
+        Decimal(stop_loss_price)
+        .quantize(Decimal(str(symbol.tick_size)), rounding=ROUND_DOWN)
+    )
+    return float(stop_loss_price)

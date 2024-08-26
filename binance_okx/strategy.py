@@ -55,6 +55,7 @@ def time_close_position(strategy: Strategy, position: Position) -> bool:
 
 
 def fill_position_data(strategy: Strategy, position: Position, prices: dict, prices_entry: dict) -> Position:
+    symbol = position.symbol.okx
     position.ask_bid_data.update(
         binance_previous_ask=prices['binance_previous_ask'],
         binance_last_ask=prices['binance_last_ask'],
@@ -78,16 +79,16 @@ def fill_position_data(strategy: Strategy, position: Position, prices: dict, pri
         position.sl_tp_data.update(take_profit_grid)
     if strategy.take_profit:
         position.sl_tp_data['take_profit_price'] = calc.get_take_profit_price(
-            position.entry_price, strategy.take_profit, strategy.open_plus_close_fee,
-            prices['spread_percent'], position.side
+            symbol, position.entry_price, strategy.take_profit,
+            strategy.open_plus_close_fee, prices['spread_percent'], position.side
         )
     if strategy.stop_loss:
         position.sl_tp_data['stop_loss_price'] = calc.get_stop_loss_price(
-            position.entry_price, strategy.stop_loss, position.side
+            symbol, position.entry_price, strategy.stop_loss, position.side
         )
     if strategy.stop_loss_breakeven:
         position.sl_tp_data['stop_loss_breakeven'] = get_stop_loss_breakeven(
-            position.entry_price, strategy.open_plus_close_fee,
+            symbol, position.entry_price, strategy.open_plus_close_fee,
             prices['spread_percent'], position.side
         )
     position.ask_bid_data.update(

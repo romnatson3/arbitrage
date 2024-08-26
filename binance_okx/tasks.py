@@ -297,7 +297,7 @@ def open_or_increase_position(strategy_id: int, symbol: str, position_side: str,
                     open_emulate_position(strategy, symbol, position_side, prices)
                     lock.release()
                 else:
-                    logger.info(
+                    logger.debug(
                         'Current position is still open. Skip open new position',
                         extra=strategy.extra_log
                     )

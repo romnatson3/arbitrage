@@ -1,6 +1,7 @@
 import logging
 from math import floor
 import json
+from decimal import Decimal, ROUND_DOWN
 from typing import Optional, Any
 import okx.Account
 from django_redis import get_redis_connection
@@ -21,8 +22,13 @@ class Calculator():
         contract_count = (quote_coin / price) / symbol.ct_val
         if contract_count < symbol.lot_sz:
             return symbol.lot_sz
-        sz = floor(contract_count / symbol.lot_sz) * symbol.lot_sz
-        return round(sz, 2)
+        # sz = floor(contract_count / symbol.lot_sz) * symbol.lot_sz
+        # return round(sz, 2)
+        sz = float(
+            Decimal(contract_count)
+            .quantize(Decimal(str(symbol.lot_sz)), rounding=ROUND_DOWN)
+        )
+        return sz
 
     def get_base_coin_from_sz(self, sz: float, contract_value: float) -> float:
         base_coin = sz * contract_value
@@ -32,19 +38,28 @@ class Calculator():
         if not price:
             price = symbol.market_price
         usdt = sz * symbol.market_price * symbol.ct_val
-        return usdt
+        return round(usdt, 2)
 
-    def get_stop_loss_price(self, price: float, percentage: float, position_side: str) -> float:
+    def get_stop_loss_price(
+        self, symbol: OkxSymbol, price: float, percentage: float,
+        position_side: str
+    ) -> float:
         if percentage <= 0:
             return 0
         if position_side == 'long':
             stop_loss_price = price - (price / 100 * percentage)
         if position_side == 'short':
             stop_loss_price = price + (price / 100 * percentage)
-        return round(stop_loss_price, 2)
+        # return round(stop_loss_price, 4)
+        stop_loss_price = float(
+            Decimal(stop_loss_price)
+            .quantize(Decimal(str(symbol.tick_size)), rounding=ROUND_DOWN)
+        )
+        return stop_loss_price
 
     def get_take_profit_price(
         self,
+        symbol: OkxSymbol,
         price: float,
         percentage: float,
         fee_percent: float,
@@ -57,7 +72,12 @@ class Calculator():
             take_profit_price = price * (1 + (percentage + fee_percent + spread_percent) / 100)
         if position_side == 'short':
             take_profit_price = price * (1 - (percentage + fee_percent + spread_percent) / 100)
-        return round(take_profit_price, 2)
+        # return round(take_profit_price, 4)
+        take_profit_price = float(
+            Decimal(take_profit_price)
+            .quantize(Decimal(str(symbol.tick_size)), rounding=ROUND_DOWN)
+        )
+        return take_profit_price
 
 
 calc = Calculator()
