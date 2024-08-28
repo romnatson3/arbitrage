@@ -504,13 +504,13 @@ def get_take_profit_grid(position: Position, entry_price: float, spread_percent:
             entry_price * (1 - (strategy.tp_second_price_percent + strategy.open_plus_close_fee + spread_percent) / 100)
         )
     tp_first_part = position.sz * strategy.tp_first_part_percent / 100
-    # tp_first_part = round(floor(tp_first_part / lot_sz) * lot_sz, 2)
-    tp_first_part = float(Decimal(tp_first_part).quantize(Decimal(str(lot_sz)), rounding=ROUND_DOWN))
+    tp_first_part = round(floor(tp_first_part / lot_sz) * lot_sz, 2)
+    # tp_first_part = float(Decimal(tp_first_part).quantize(Decimal(str(lot_sz)), rounding=ROUND_DOWN))
     # strategy.tp_second_part_percent = 100 - strategy.tp_first_part_percent
     # tp_second_part = position.sz * strategy.tp_second_part_percent / 100
     tp_second_part = position.sz - tp_first_part
-    # tp_second_part = round(floor(tp_second_part / lot_sz) * lot_sz, 2)
-    tp_second_part = float(Decimal(tp_second_part).quantize(Decimal(str(lot_sz)), rounding=ROUND_DOWN))
+    tp_second_part = round(floor(tp_second_part / lot_sz) * lot_sz, 2)
+    # tp_second_part = float(Decimal(tp_second_part).quantize(Decimal(str(lot_sz)), rounding=ROUND_DOWN))
     return dict(
         # tp_first_price=round(tp_first_price, 4),
         tp_first_price=float(Decimal(tp_first_price).quantize(Decimal(str(tick_size)), rounding=ROUND_DOWN)),
