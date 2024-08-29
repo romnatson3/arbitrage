@@ -531,6 +531,9 @@ class PositionAdmin(admin.ModelAdmin):
                         d[i] = f'{j:.8f}'.replace('.', ',')
                     else:
                         d[i] = str(j).replace('.', ',')
+                if isinstance(j, str):
+                    if i in ['Прибуток']:
+                        d[i] = f'{j}'.replace('.', ',')
             writer.writerow(d.values())
         f.seek(0)
         response = HttpResponse(f.read(), content_type='text/csv', charset='utf-8-sig')

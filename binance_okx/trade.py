@@ -431,8 +431,10 @@ class OkxEmulateTrade():
         close_price: float,
         size_contract: float = None,
         date_time: str = '',
-        completely: bool = False
+        completely: bool = False,
+        part: int | None = None
     ) -> None:
+        lot_sz = str(self.symbol.okx.lot_sz)
         if not date_time:
             date_time = datetime.fromtimestamp(timezone.now().timestamp()).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
         if completely:
@@ -441,27 +443,43 @@ class OkxEmulateTrade():
             position.is_open = False
             position.save(update_fields=['is_open'])
             logger.warning(
-                f'Virtual position is closed completely {size_contract=}, {size_usdt=}',
+                'Virtual position is closed completely '
+                f'{close_price=} {size_contract=}, {size_usdt=}',
                 extra=self.strategy.extra_log
             )
         else:
             size_usdt = calc.get_usdt_from_sz(self.symbol.okx, size_contract, close_price)
-            position.position_data['pos'] = round(position.position_data['pos'] - size_contract, 2)
-            position.position_data['notionalUsd'] = round(position.position_data['notionalUsd'] - size_usdt, 2)
+            pos = position.position_data['pos'] - size_contract
+            position.position_data['pos'] = float(
+                Decimal(pos).quantize(Decimal(lot_sz), rounding=ROUND_DOWN)
+            )
+            position.position_data['notionalUsd'] = round(
+                position.position_data['notionalUsd'] - size_usdt, 2
+            )
             position.save(update_fields=['position_data'])
             logger.warning(
-                f'Virtual position is closed partially {size_contract=}, {size_usdt=}',
+                'Virtual position is closed partially '
+                f'{close_price=} {size_contract=}, {size_usdt=}',
                 extra=self.strategy.extra_log
             )
-        self._create_close_execution(position, close_price, size_contract, size_usdt, date_time)
+        self._create_close_execution(
+            position, close_price, size_contract, size_usdt, date_time, part
+        )
 
     def _create_close_execution(
         self, position: Position, close_price: float, size_contract: float,
-        size_usdt: float, date_time: str
+        size_usdt: float, date_time: str, part: int | None = None
     ) -> None:
         sub_type = 'Open long' if position.side == 'long' else 'Open short'
         open_execution = position.executions.filter(data__subType=sub_type).first()
-        open_fee = open_execution.data['fee']
+        tp_first_part_percent = self.strategy.tp_first_part_percent
+        tp_second_part_percent = 100 - tp_first_part_percent
+        if part == 1:
+            open_fee = round(open_execution.data['fee'] * tp_first_part_percent / 100, 10)
+        elif part == 2:
+            open_fee = round(open_execution.data['fee'] * tp_second_part_percent / 100, 10)
+        else:
+            open_fee = open_execution.data['fee']
         open_price = open_execution.data['px']
         base_coin = calc.get_base_coin_from_sz(size_contract, self.symbol.okx.ct_val)
         close_fee = round(size_usdt * self.strategy.close_fee / 100, 10)
