@@ -113,7 +113,7 @@ def get_pre_enter_data(strategy: Strategy, symbol: Symbol, position_side: str, p
     elif position_side == 'short':
         sz = prices['okx_last_bid_size']
         price = prices['okx_last_bid']
-    logger.info(f'Get pre-enter data {sz=} {price=}', extra=strategy.extra_log)
+    logger.warning(f'Get pre-enter data {sz=} {price=}', extra=strategy.extra_log)
     sz_from_admin = calc.get_sz(symbol.okx, strategy.position_size, price)
     if sz < sz_from_admin:
         size_contract = sz
@@ -160,7 +160,7 @@ def increase_trade_position(strategy: Strategy, position: Position, prices: dict
         trade = OkxTrade(strategy, position.symbol, size_contract, position.side)
         trade.open_position(increase=True)
     else:
-        logger.warning('Not all conditions are met to increase the position', extra=strategy.extra_log)
+        logger.info('Not all conditions are met to increase the position', extra=strategy.extra_log)
         TaskLock(f'open_or_increase_position_{strategy.id}_{position.symbol}').release()
 
 
@@ -190,7 +190,7 @@ def place_orders_after_open_trade_position(position: Position) -> None:
                 position.save(update_fields=['sl_tp_data'])
                 logger.debug(f'Save limit {order_id=} for first part', extra=strategy.extra_log)
                 order_id = trade.place_limit_order(
-                    sl_tp_data.tp_second_price, position.sz - sl_tp_data.tp_first_part
+                    sl_tp_data.tp_second_price, sl_tp_data.tp_second_part
                 )
                 position.sl_tp_data['tp_second_limit_order_id'] = int(order_id)
                 position.save(update_fields=['sl_tp_data'])
@@ -243,8 +243,7 @@ def calc_tp_and_place_orders_after_increase_trade_position(position: Position) -
             position.sl_tp_data['tp_third_limit_order_id'] = int(order_id)
             logger.debug(f'Save limit {order_id=} for third part', extra=strategy.extra_log)
             order_id = trade.place_limit_order(
-                take_profit_grid['tp_second_price'],
-                position.sz - take_profit_grid['tp_first_part']
+                take_profit_grid['tp_second_price'], take_profit_grid['tp_second_part']
             )
             position.sl_tp_data['tp_fourth_limit_order_id'] = int(order_id)
             logger.debug(f'Save limit {order_id=} for fourth part', extra=strategy.extra_log)

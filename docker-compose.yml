@@ -146,10 +146,10 @@ services:
 
   check_condition:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 20 -l INFO -Q check_condition
+    entrypoint: celery -A exchange worker -c 100 -l INFO -Q check_condition
     deploy:
       mode: replicated
-      replicas: 3
+      replicas: 1
     restart: always
     depends_on:
       - rabbitmq
@@ -168,10 +168,10 @@ services:
 
   positions:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 15 -l INFO -Q positions
+    entrypoint: celery -A exchange worker -c 30 -l INFO -Q positions
     deploy:
       mode: replicated
-      replicas: 5
+      replicas: 1
     restart: always
     depends_on:
       - rabbitmq
@@ -190,10 +190,10 @@ services:
 
   market:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 15 -l INFO -Q market 
+    entrypoint: celery -A exchange worker -c 20 -l INFO -Q market 
     deploy:
       mode: replicated
-      replicas: 5
+      replicas: 1
     restart: always
     depends_on:
       - rabbitmq

@@ -26,6 +26,8 @@ def save_okx_market_price_to_cache(data: dict) -> None:
 
 
 def write_ask_bid_to_csv_and_cache_by_symbol(data: dict) -> None:
+    # connection = get_redis_connection('default')
+    pipeline = connection.pipeline()
     symbol = data['s']
     binance_ask_price = float(data['a'])
     binance_ask_size = float(data['A'])
@@ -37,13 +39,6 @@ def write_ask_bid_to_csv_and_cache_by_symbol(data: dict) -> None:
     binance_bid_size_str = str(binance_bid_size).replace('.', ',')
     timestamp = int(data['E'])
     date_time = datetime.fromtimestamp(timestamp / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
-    file_path = pathlib.Path('/opt/ask_bid') / f'{symbol}.csv'
-    if not file_path.parent.exists():
-        os.mkdir(file_path.parent)
-    header = ['symbol', 'date', 'time', 'binance_ask_price', 'binance_bid_price', 'okx_ask_price',
-              'okx_ask_size', 'okx_bid_price', 'okx_bid_size']
-    # connection = get_redis_connection('default')
-    pipeline = connection.pipeline()
     okx_last_data = connection.zrange(f'okx_ask_bid_{symbol}', -1, -1)
     if okx_last_data:
         okx_last_data = json.loads(okx_last_data[0])
@@ -74,16 +69,22 @@ def write_ask_bid_to_csv_and_cache_by_symbol(data: dict) -> None:
     pipeline.execute_command('zadd', key, timestamp, data)
     pipeline.execute_command('zremrangebyscore', key, 0, one_minute_ago)
     pipeline.execute()
-    with open(file_path, 'a', newline='') as file:
-        writer = csv.writer(file, delimiter=';')
-        if file.tell() == 0:
-            writer.writerow(header)
-        date = date_time.split(' ')[0]
-        time = date_time.split(' ')[1]
-        writer.writerow([
-            symbol, date, time, binance_ask_price_str, binance_bid_price_str, okx_ask_price_str,
-            okx_ask_size_str, okx_bid_price_str, okx_bid_size_str
-        ])
+    if cache.get('write_ask_bid_to_csv', False):
+        file_path = pathlib.Path('/opt/ask_bid') / f'{symbol}.csv'
+        if not file_path.parent.exists():
+            os.mkdir(file_path.parent)
+        header = ['symbol', 'date', 'time', 'binance_ask_price', 'binance_bid_price', 'okx_ask_price',
+                  'okx_ask_size', 'okx_bid_price', 'okx_bid_size']
+        with open(file_path, 'a', newline='') as file:
+            writer = csv.writer(file, delimiter=';')
+            if file.tell() == 0:
+                writer.writerow(header)
+            date = date_time.split(' ')[0]
+            time = date_time.split(' ')[1]
+            writer.writerow([
+                symbol, date, time, binance_ask_price_str, binance_bid_price_str, okx_ask_price_str,
+                okx_ask_size_str, okx_bid_price_str, okx_bid_size_str
+            ])
 
 
 def save_okx_ask_bid_to_cache(data: dict) -> None:

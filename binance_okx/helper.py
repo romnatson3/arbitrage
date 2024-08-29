@@ -22,13 +22,13 @@ class Calculator():
         contract_count = (quote_coin / price) / symbol.ct_val
         if contract_count < symbol.lot_sz:
             return symbol.lot_sz
-        sz = floor(contract_count / symbol.lot_sz) * symbol.lot_sz
-        return round(sz, 2)
-        # sz = float(
-        #     Decimal(contract_count)
-        #     .quantize(Decimal(str(symbol.lot_sz)), rounding=ROUND_DOWN)
-        # )
-        # return sz
+        # sz = floor(contract_count / symbol.lot_sz) * symbol.lot_sz
+        # return round(sz, 2)
+        sz = float(
+            Decimal(contract_count)
+            .quantize(Decimal(str(symbol.lot_sz)), rounding=ROUND_DOWN)
+        )
+        return sz
 
     def get_base_coin_from_sz(self, sz: float, contract_value: float) -> float:
         base_coin = sz * contract_value

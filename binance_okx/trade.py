@@ -142,6 +142,7 @@ class OkxTrade():
         symbol: OkxSymbol = None,
         position_side: str = None
     ) -> str:
+        price = f'{price:.10f}'.rstrip('0')
         if not symbol:
             symbol = self.symbol_okx
         if not position_side:
@@ -179,6 +180,7 @@ class OkxTrade():
         return order_id
 
     def place_take_profit(self, price: float, symbol: OkxSymbol = None, position_side: str = None) -> str:
+        price = f'{price:.10f}'.rstrip('0')
         if not symbol:
             symbol = self.symbol_okx
         if not position_side:
@@ -210,6 +212,8 @@ class OkxTrade():
         self, stop_loss_price: float, take_profit_price: float,
         symbol: OkxSymbol = None, position_side: str = None
     ) -> str:
+        stop_loss_price = f'{stop_loss_price:.10f}'.rstrip('0')
+        take_profit_price = f'{take_profit_price:.10f}'.rstrip('0')
         if not symbol:
             symbol = self.symbol_okx
         if not position_side:
@@ -242,6 +246,7 @@ class OkxTrade():
         return order_id
 
     def place_limit_order(self, price: float, size_contract: float) -> str:
+        price = f'{price:.10f}'.rstrip('0')
         if self.position_side == 'long':
             side = 'sell'
         if self.position_side == 'short':
@@ -322,6 +327,7 @@ class OkxTrade():
         if not algo_id:
             algo_id = self.place_stop_loss(price, sz, symbol, position_side)
             return algo_id
+        price = f'{price:.10f}'.rstrip('0')
         parameters = dict(
             instId=symbol.inst_id,
             algoId=algo_id,
@@ -342,6 +348,7 @@ class OkxTrade():
         return order_id
 
     def update_take_profit(self, price: float, symbol: OkxSymbol = None, position_side: str = None) -> None:
+        price = f'{price:.10f}'.rstrip('0')
         if not symbol:
             symbol = self.symbol_okx
         if not position_side:
@@ -504,13 +511,13 @@ def get_take_profit_grid(position: Position, entry_price: float, spread_percent:
             entry_price * (1 - (strategy.tp_second_price_percent + strategy.open_plus_close_fee + spread_percent) / 100)
         )
     tp_first_part = position.sz * strategy.tp_first_part_percent / 100
-    tp_first_part = round(floor(tp_first_part / lot_sz) * lot_sz, 2)
-    # tp_first_part = float(Decimal(tp_first_part).quantize(Decimal(str(lot_sz)), rounding=ROUND_DOWN))
+    # tp_first_part = round(floor(tp_first_part / lot_sz) * lot_sz, 2)
+    tp_first_part = float(Decimal(tp_first_part).quantize(Decimal(str(lot_sz)), rounding=ROUND_DOWN))
     # strategy.tp_second_part_percent = 100 - strategy.tp_first_part_percent
     # tp_second_part = position.sz * strategy.tp_second_part_percent / 100
     tp_second_part = position.sz - tp_first_part
-    tp_second_part = round(floor(tp_second_part / lot_sz) * lot_sz, 2)
-    # tp_second_part = float(Decimal(tp_second_part).quantize(Decimal(str(lot_sz)), rounding=ROUND_DOWN))
+    # tp_second_part = round(floor(tp_second_part / lot_sz) * lot_sz, 2)
+    tp_second_part = float(Decimal(tp_second_part).quantize(Decimal(str(lot_sz)), rounding=ROUND_DOWN))
     return dict(
         # tp_first_price=round(tp_first_price, 4),
         tp_first_price=float(Decimal(tp_first_price).quantize(Decimal(str(tick_size)), rounding=ROUND_DOWN)),

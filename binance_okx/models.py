@@ -99,6 +99,7 @@ class BinanceSymbol(BaseModel):
 
     symbol = models.CharField(primary_key=True, unique=True, max_length=20)
     data = models.JSONField(default=dict, help_text='Instrument data')
+    is_active = models.BooleanField(default=True, help_text='Is active')
 
     def __str__(self):
         return self.symbol
@@ -111,6 +112,7 @@ class OkxSymbol(BaseModel):
 
     symbol = models.CharField(primary_key=True, unique=True, max_length=20)
     data = models.JSONField(default=dict, help_text='Instrument data')
+    is_active = models.BooleanField(default=True, help_text='Is active')
 
     @property
     def inst_id(self) -> str:
@@ -206,6 +208,7 @@ class Symbol(BaseModel):
     symbol = models.CharField(primary_key=True, unique=True, max_length=20)
     okx = models.ForeignKey('OkxSymbol', on_delete=models.CASCADE, related_name='okx', help_text='OKX Symbol')
     binance = models.ForeignKey('BinanceSymbol', on_delete=models.CASCADE, related_name='binance', help_text='Binance Symbol')
+    is_active = models.BooleanField(default=True, help_text='Is active')
 
     def __str__(self):
         return self.symbol

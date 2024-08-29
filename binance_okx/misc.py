@@ -17,8 +17,10 @@ def get_pretty_text(obj) -> str:
     text = json.dumps(obj, indent=2)
     l = []
     for k, v in obj.items():
+        if not v:
+            v = ''
         if isinstance(v, float):
-            l.append(f'{k}: {v:.5f}')
+            l.append(f'{k}: {v:.10f}'.rstrip('0').rstrip('.'))
         elif isinstance(v, list):
             l.append(
                 f'{k}: <pre style="font-size: 1.05em; font-family: monospace;">'

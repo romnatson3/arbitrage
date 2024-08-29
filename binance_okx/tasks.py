@@ -49,45 +49,85 @@ def update_okx_symbols() -> None:
     public_api = okx.PublicData.PublicAPI(flag=settings.OKX_FLAG)
     result = public_api.get_instruments(instType='SWAP')
     symbols = result['data']
+    available_symbols = {''.join(i['instId'].split('-')[:-1]) for i in symbols}
     for i in symbols:
         inst_id = ''.join(i['instId'].split('-')[:-1])
-        symbol, created = OkxSymbol.objects.update_or_create(symbol=inst_id, defaults={'data': i})
+        is_active = i['state'] == 'live'
+        symbol, created = OkxSymbol.objects.update_or_create(
+            symbol=inst_id, defaults={'is_active': is_active, 'data': i}
+        )
         if created:
             logger.info(f'Created okx symbol {symbol}')
         else:
             logger.info(f'Updated okx symbol {symbol}')
+    for i in OkxSymbol.objects.all():
+        if i.symbol not in available_symbols:
+            i.is_active = False
+            i.save(update_fields=['is_active'])
+            logger.info(f'Deactivated okx symbol {i}')
 
 
 def update_binance_symbols() -> None:
     client = UMFutures(show_limit_usage=True)
     result = client.exchange_info()
     symbols = result['data']['symbols']
+    available_symbols = {i['symbol'] for i in symbols}
     for i in symbols:
         symbol = i['symbol']
-        symbol, created = BinanceSymbol.objects.update_or_create(symbol=symbol, defaults={'data': i})
+        is_active = i['status'] == 'TRADING'
+        symbol, created = BinanceSymbol.objects.update_or_create(
+            symbol=symbol, defaults={'is_active': is_active, 'data': i}
+        )
         if created:
             logger.info(f'Created binance symbol {symbol}')
         else:
             logger.info(f'Updated binance symbol {symbol}')
+    for i in BinanceSymbol.objects.all():
+        if i.symbol not in available_symbols:
+            i.is_active = False
+            i.save(update_fields=['is_active'])
+            logger.info(f'Deactivated binance symbol {i}')
+
+
+def remove_not_active_symbols_from_strategies() -> None:
+    for strategy in Strategy.objects.all():
+        symbols = strategy.symbols.all()
+        for symbol in symbols:
+            if not symbol.is_active:
+                strategy.symbols.remove(symbol)
+                logger.info(f'Removed not active symbol {symbol} from strategy {strategy}')
 
 
 @app.task
 def update_symbols() -> None:
-    update_okx_symbols()
-    update_binance_symbols()
-    okx_symbols = list(OkxSymbol.objects.order_by('symbol'))
-    binance_symbols = list(BinanceSymbol.objects.order_by('symbol'))
-    for i in okx_symbols:
-        for j in binance_symbols:
-            okx_symbol = re.sub(r'\d', '', i.symbol)
-            binance_symbol = re.sub(r'\d', '', j.symbol)
-            if i.symbol == j.symbol:
-                Symbol.objects.get_or_create(symbol=i.symbol, okx=i, binance=j)
-                break
-            elif okx_symbol == binance_symbol:
-                logger.warning(f'Found similar symbols, okx: {i.symbol}, binance: {j.symbol}')
-                Symbol.objects.get_or_create(symbol=i.symbol, okx=i, binance=j)
-                break
+    try:
+        update_binance_symbols()
+        update_okx_symbols()
+        okx_symbols = list(OkxSymbol.objects.order_by('symbol'))
+        binance_symbols = list(BinanceSymbol.objects.order_by('symbol'))
+        available_symbols = set()
+        for i in okx_symbols:
+            for j in binance_symbols:
+                okx_symbol = re.sub(r'\d', '', i.symbol)
+                binance_symbol = re.sub(r'\d', '', j.symbol)
+                if i.symbol == j.symbol or okx_symbol == binance_symbol:
+                    if okx_symbol == binance_symbol:
+                        logger.info(f'Found similar symbols, okx: {i.symbol}, binance: {j.symbol}')
+                    available_symbols.add(i.symbol)
+                    is_active = i.is_active and j.is_active
+                    Symbol.objects.update_or_create(
+                        symbol=i.symbol, defaults={'okx': i, 'binance': j, 'is_active': is_active}
+                    )
+                    break
+        for i in Symbol.objects.all():
+            if i.symbol not in available_symbols:
+                i.is_active = False
+                i.save(update_fields=['is_active'])
+                logger.info(f'Deactivated symbol {i}')
+        remove_not_active_symbols_from_strategies()
+    except Exception as e:
+        logger.exception(e)
+        raise e
 
 
 @app.task

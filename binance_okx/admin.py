@@ -138,35 +138,41 @@ class AccountAdmin(admin.ModelAdmin):
 
 @admin.register(Symbol)
 class SymbolAdmin(admin.ModelAdmin):
-    list_display = ('symbol', 'updated_at')
+    list_display = ('is_active', 'symbol', 'updated_at')
     search_fields = ('symbol',)
-    fields = ('symbol', 'okx', 'binance', 'updated_at', 'created_at')
+    fields = ('symbol', 'is_active', 'okx', 'binance', 'updated_at', 'created_at')
     ordering = ('symbol',)
     readonly_fields = ('symbol', 'okx', 'binance', 'updated_at', 'created_at')
+    list_filter = ('is_active',)
+    list_display_links = ('symbol',)
+    list_per_page = 500
 
     def get_search_results(self, request, queryset, search_term):
         queryset, use_distinct = super().get_search_results(request, queryset, search_term)
         if request.headers.get('x-requested-with') == 'XMLHttpRequest':
             return Symbol.objects.filter(
                 # ~Q(symbol__in=Strategy.objects.values_list('symbols', flat=True).filter(enabled=True)),
-                symbol__icontains=search_term
+                symbol__icontains=search_term, is_active=True
             ), use_distinct
         return queryset, use_distinct
 
 
 @admin.register(BinanceSymbol)
 class BinanceSymbolAdmin(admin.ModelAdmin):
-    list_display = ('symbol', 'updated_at')
-    fields = ('symbol', 'pretty_data', 'updated_at', 'created_at')
+    list_display = ('is_active', 'symbol', 'updated_at')
+    fields = ('symbol', 'is_active', 'pretty_data', 'updated_at', 'created_at')
     search_fields = ('symbol',)
     ordering = ('symbol',)
+    list_display_links = ('symbol',)
+    list_filter = ('is_active',)
+    list_per_page = 500
 
     @admin.display(description='Data')
     def pretty_data(self, obj) -> str:
         return get_pretty_dict(obj.data)
 
     def has_delete_permission(self, request, obj=None):
-        return False
+        return True
 
     def has_add_permission(self, request):
         return False
@@ -177,17 +183,20 @@ class BinanceSymbolAdmin(admin.ModelAdmin):
 
 @admin.register(OkxSymbol)
 class OkxSymbolAdmin(admin.ModelAdmin):
-    list_display = ('symbol', 'updated_at')
-    fields = ('symbol', 'pretty_data', 'updated_at', 'created_at')
+    list_display = ('is_active', 'symbol', 'updated_at')
+    fields = ('symbol', 'is_active', 'pretty_data', 'updated_at', 'created_at')
     search_fields = ('symbol',)
     ordering = ('symbol',)
+    list_display_links = ('symbol',)
+    list_filter = ('is_active',)
+    list_per_page = 500
 
     @admin.display(description='Data')
     def pretty_data(self, obj) -> str:
         return get_pretty_dict(obj.data)
 
     def has_delete_permission(self, request, obj=None):
-        return False
+        return True
 
     def has_add_permission(self, request):
         return False
