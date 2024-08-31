@@ -121,8 +121,12 @@ class TaskFormatter(CeleryTaskFormatter):
 def setup_task_logger(logger, *args, **kwargs):
     for handler in logger.handlers:
         tf = TaskFormatter(
-            '[%(asctime)s.%(msecs)03d] %(short_task_id)s %(levelname)-7s %(name)-17s '
+            '[%(asctime)s.%(msecs)03d] %(short_task_id)s %(levelname)-7s '
             '[%(created_by)s] [%(strategy)s] [%(symbol)s] [%(position)s] %(message)s',
         )
+        # tf = TaskFormatter(
+        #     '[%(asctime)s.%(msecs)03d] %(short_task_id)s %(levelname)-7s %(name)-17s '
+        #     '[%(created_by)s] [%(strategy)s] [%(symbol)s] [%(position)s] %(message)s',
+        # )
         tf.datefmt = '%d-%m-%Y %H:%M:%S'
         handler.setFormatter(tf)

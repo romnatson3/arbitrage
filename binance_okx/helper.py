@@ -1,4 +1,5 @@
 import logging
+import time
 from math import floor
 import json
 from decimal import Decimal, ROUND_DOWN
@@ -103,15 +104,21 @@ class TaskLock():
         self.release()
 
 
-def check_all_conditions(strategy: Strategy, symbol: Symbol) -> tuple[bool, str, dict]:
+def check_all_conditions(strategy: Strategy, symbol: Symbol, max_score: int) -> tuple[bool, str, dict]:
+    start_time = time.time()
     prices = {}
     nothing = False, '', {}
-    # conection = get_redis_connection('default')
-    records = conection.zrange(f'binance_okx_ask_bid_{symbol.symbol}', 0, -1)
-    records = [json.loads(i) for i in records]
+    min_score = max_score - strategy.search_duration
+    records = conection.zrangebyscore(
+        f'binance_okx_ask_bid_{symbol.symbol}', min_score, max_score
+    )
     if not records:
-        logger.debug('No records found in cache', extra=strategy.extra_log)
+        logger.debug(
+            f'No cache entry found in the range {min_score=}, {max_score=}',
+            extra=strategy.extra_log
+        )
         return nothing
+    records = [json.loads(i) for i in records]
     data = records.pop(-1)
     binance_last_ask = data['binance_ask_price']
     binance_last_bid = data['binance_bid_price']
@@ -127,16 +134,14 @@ def check_all_conditions(strategy: Strategy, symbol: Symbol) -> tuple[bool, str,
         date_time_last_prices=date_time_last_prices
     )
     logger.trace(
+        'Last record in cache: '
         f'{date_time_last_prices=}, {binance_last_ask=}, {binance_last_bid=}, '
         f'{okx_last_ask=}, {okx_last_bid=}',
         extra=strategy.extra_log
     )
-    edge_timestamp = data['timestamp'] - strategy.search_duration
-    records = [i for i in records if i['timestamp'] >= edge_timestamp]
     if not records:
-        logger.trace(
-            'Only one record found in cache during the last '
-            f'{strategy.search_duration} ms',
+        logger.debug(
+            f'Only one cache entry found in the range {min_score=}, {max_score=}',
             extra=strategy.extra_log
         )
         return nothing
@@ -152,55 +157,53 @@ def check_all_conditions(strategy: Strategy, symbol: Symbol) -> tuple[bool, str,
             binance_previous_ask=binance_previous_ask,
             binance_previous_bid=binance_previous_bid,
             okx_previous_ask=okx_previous_ask,
-            okx_previous_bid=okx_previous_bid
+            okx_previous_bid=okx_previous_bid,
+            date_time_previous_prices=date_time_previous_prices
         )
         if binance_last_bid > binance_previous_bid:
             position_side = 'long'
-            logger.debug(
+            logger.trace(
                 f'Current iteration: {counter}. '
                 'First condition for long position is met '
-                f'{binance_last_bid=} > {binance_previous_bid=}',
-                extra=strategy.extra_log
-            )
-            logger.trace(
-                f'{date_time_previous_prices=}, {binance_previous_ask=}, '
-                f'{binance_previous_bid=}, {okx_previous_ask=}, {okx_previous_bid=}',
+                f'{binance_last_bid=} > {binance_previous_bid=}, '
+                f'{date_time_last_prices=}, {date_time_previous_prices=}',
                 extra=strategy.extra_log
             )
             second_condition_met, ask_bid_data = (
-                check_second_condition(strategy, symbol, position_side, prices)
+                check_second_condition(
+                    strategy, symbol, position_side, prices, counter, len(records)
+                )
             )
             if second_condition_met:
                 return True, position_side, ask_bid_data
         if binance_last_ask < binance_previous_ask:
             position_side = 'short'
-            logger.debug(
+            logger.trace(
                 f'Current iteration: {counter}. '
                 'First condition for short position is met '
-                f'{binance_last_ask=} < {binance_previous_ask=}',
-                extra=strategy.extra_log
-            )
-            logger.trace(
-                f'{date_time_previous_prices=}, {binance_previous_ask=}, '
-                f'{binance_previous_bid=}, {okx_previous_ask=}, {okx_previous_bid=}',
+                f'{binance_last_ask=} < {binance_previous_ask=}, '
+                f'{date_time_last_prices=}, {date_time_previous_prices=}',
                 extra=strategy.extra_log
             )
             second_condition_met, ask_bid_data = (
-                check_second_condition(strategy, symbol, position_side, prices)
+                check_second_condition(
+                    strategy, symbol, position_side, prices, counter, len(records)
+                )
             )
             if second_condition_met:
                 return True, position_side, ask_bid_data
-    else:
-        logger.trace(
-            f'Conditions is NOT met during the last {strategy.search_duration} ms. '
-            f'Iterations: {counter}',
-            extra=strategy.extra_log
-        )
+    execution_time = round((time.time() - start_time) * 1000)
+    logger.debug(
+        f'Conditions are NOT met, last price time: {date_time_last_prices}, '
+        f'iterations: {counter}, execution time: {execution_time} ms',
+        extra=strategy.extra_log
+    )
     return nothing
 
 
 def check_second_condition(
-    strategy: Strategy, symbol: Symbol, position_side: str, prices: dict
+    strategy: Strategy, symbol: Symbol, position_side: str, prices: dict,
+    counter: int, records_count: int
 ) -> tuple[bool, dict]:
     binance_previous_ask = prices['binance_previous_ask']
     binance_previous_bid = prices['binance_previous_bid']
@@ -210,6 +213,8 @@ def check_second_condition(
     okx_previous_bid = prices['okx_previous_bid']
     okx_last_ask = prices['okx_last_ask']
     okx_last_bid = prices['okx_last_bid']
+    date_time_last_prices = prices['date_time_last_prices']
+    date_time_previous_prices = prices['date_time_previous_prices']
     if position_side == 'long':
         binance_delta_percent = (
             (binance_last_bid - binance_previous_bid) / binance_previous_bid * 100
@@ -226,7 +231,8 @@ def check_second_condition(
         )
     if okx_delta_percent >= 0:
         logger.trace(
-            f'{position_side=}, {binance_delta_percent=:.5f}, {okx_delta_percent=:.5f}',
+            f'{okx_delta_percent=:.5f} >= 0, {position_side=}, '
+            f'{binance_delta_percent=:.5f}, {okx_delta_percent=:.5f}',
             extra=strategy.extra_log
         )
         spread_percent = (okx_last_ask - okx_last_bid) / okx_last_bid * 100
@@ -237,9 +243,17 @@ def check_second_condition(
         min_delta_percent = strategy.open_plus_close_fee + spread_percent + take_profit
         delta_percent = binance_delta_percent - okx_delta_percent
         if delta_percent >= min_delta_percent:
-            logger.info(
-                f'Second condition for {position_side} position is met '
+            logger.debug(
+                f'Second condition for {position_side} position is met, '
+                f'iteration: {counter} of {records_count}, '
                 f'{delta_percent=:.5f} >= {min_delta_percent=:.5f}',
+                extra=strategy.extra_log
+            )
+            logger.debug(
+                f'{date_time_previous_prices=}, {binance_previous_ask=}, {binance_previous_bid=}, '
+                f'{okx_previous_ask=}, {okx_previous_bid=}, '
+                f'{date_time_last_prices=}, {binance_last_ask=}, {binance_last_bid=}, '
+                f'{okx_last_ask=}, {okx_last_bid=}',
                 extra=strategy.extra_log
             )
             if position_side == 'long':
@@ -258,14 +272,15 @@ def check_second_condition(
             )
             return True, prices
         else:
-            logger.debug(
+            logger.trace(
                 f'Second condition for {position_side} position is NOT met '
-                f'{delta_percent=:.5f} < {min_delta_percent=:.5f}',
+                f'{delta_percent=:.5f} < {min_delta_percent=:.5f}, '
+                f'{date_time_last_prices=}, {date_time_previous_prices=}',
                 extra=strategy.extra_log
             )
             return False, {}
     else:
-        logger.debug(
+        logger.trace(
             f'Second condition for {position_side} position is NOT met, '
             f'{okx_delta_percent=:.5f} < 0',
             extra=strategy.extra_log

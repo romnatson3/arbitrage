@@ -345,7 +345,7 @@ def closing_emulate_position_by_limit(
                             )
                             key = f'emulate_position_total_last_size_{position.id}_{symbol}'
                             total_last_size = cache.get(key, 0)
-                            total_last_size += last_size
+                            total_last_size = round(total_last_size + last_size, 2)
                             if total_last_size >= sl_tp_data.tp_first_part:
                                 cache.delete(key)
                                 logger.info(

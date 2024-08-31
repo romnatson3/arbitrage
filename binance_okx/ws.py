@@ -297,7 +297,10 @@ class WebSocketBinaceAskBid(WebSocketOkxAskBid):
             if previous_ask_bid[0] == message['a'] and previous_ask_bid[1] == message['b']:
                 return
         self._previous_ask_bid[message['s']] = [message['a'], message['b']]
-        keys = ['s', 'b', 'B', 'a', 'A', 'E']
+        date_time = datetime.fromtimestamp(
+            int(message['E']) / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
+        message['date_time'] = date_time
+        keys = ['s', 'b', 'B', 'a', 'A', 'E', 'date_time']
         return {k: v for k, v in message.items() if k in keys}
 
 

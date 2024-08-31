@@ -350,13 +350,15 @@ def open_or_increase_position(strategy_id: int, symbol: str, position_side: str,
 
 
 @app.task
-def check_condition(symbol: str) -> None:
+def check_condition(data: dict) -> None:
     try:
-        symbol = Symbol.objects.cache(symbol=symbol)[0]
+        symbol = Symbol.objects.cache(symbol=data['s'])[0]
         strategies = Strategy.objects.cache(enabled=True, symbols=symbol)
         for strategy in strategies:
             strategy._extra_log.update(symbol=symbol)
-            condition_met, position_side, prices = check_all_conditions(strategy, symbol)
+            condition_met, position_side, prices = (
+                check_all_conditions(strategy, symbol, int(data['E']))
+            )
             if condition_met:
                 open_or_increase_position.delay(strategy.id, symbol.symbol, position_side, prices)
     except Exception as e:
@@ -527,7 +529,7 @@ def run_websocket_binance_ask_bid() -> None:
                 return
             ws_binance_ask_bid.start()
             ws_binance_ask_bid.add_handler(write_ask_bid_to_csv_and_cache_by_symbol)
-            ws_binance_ask_bid.add_handler(lambda data: check_condition.delay(data['s']))
+            ws_binance_ask_bid.add_handler(lambda data: check_condition.delay(data))
             time.sleep(3)
     except AcquireLockException:
         logger.debug('Task run_websocket_binance_ask_bid is now running')

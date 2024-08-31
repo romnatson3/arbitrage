@@ -212,7 +212,7 @@ class StrategyAdmin(admin.ModelAdmin):
 
     list_display = (
         'id', 'name', 'enabled', 'mode', 'position_size', 'close_position_type',
-        '_symbols', 'updated_at'
+        'close_position_parts', '_symbols', 'updated_at'
     )
     search_fields = ('name',)
     list_filter = ()
