@@ -146,7 +146,7 @@ services:
 
   check_condition:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 100 -l INFO -Q check_condition
+    entrypoint: celery -A exchange worker --max-memory-per-child=1000 -c 100 -l INFO -Q check_condition
     deploy:
       mode: replicated
       replicas: 1

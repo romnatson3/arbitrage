@@ -227,7 +227,7 @@ class StrategyManager(models.Manager):
         )
 
     def cache(self, **kwargs) -> QuerySet:
-        timeout = kwargs.pop('_timeout', 60)
+        timeout = kwargs.pop('timeout', 60)
         key = f'strategies_{kwargs}'
         queryset = cache.get(key)
         if queryset is not None:
@@ -462,7 +462,7 @@ class PositionManager(models.Manager):
         return position
 
     def cache(self, **kwargs) -> QuerySet:
-        timeout = kwargs.pop('_timeout', 10)
+        timeout = kwargs.pop('timeout', 10)
         key = f'positions_{kwargs}'
         queryset = cache.get(key)
         if queryset is not None:

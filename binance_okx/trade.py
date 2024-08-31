@@ -5,6 +5,7 @@ from math import floor
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime
 from django.utils import timezone
+from types import SimpleNamespace as Namespace
 import okx.Trade as Trade
 import okx.Account as Account
 from .models import Strategy, Symbol, OkxSymbol, Execution, Position
@@ -399,10 +400,10 @@ class OkxEmulateTrade():
             f'at {date_time}, avgPx={position_data["avgPx"]}',
             extra=self.strategy.extra_log
         )
-        self._create_open_execution(position, date_time)
+        self.create_open_execution(position, date_time)
         return position
 
-    def _create_open_execution(self, position: Position, date_time: str) -> None:
+    def create_open_execution(self, position: Position, date_time: str) -> None:
         execution_data = Execution.get_empty_data()
         execution_data.update(
             subType='Open long' if position.side == 'long' else 'Open short',
@@ -429,55 +430,52 @@ class OkxEmulateTrade():
         self,
         position: Position,
         close_price: float,
-        size_contract: float = None,
+        size_contract: float,
         date_time: str = '',
-        completely: bool = False,
-        part: int | None = None
     ) -> None:
-        lot_sz = str(self.symbol.okx.lot_sz)
         if not date_time:
-            date_time = datetime.fromtimestamp(timezone.now().timestamp()).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
-        if completely:
-            size_contract = position.sz
-            size_usdt = calc.get_usdt_from_sz(self.symbol.okx, size_contract, close_price)
+            date_time = datetime.fromtimestamp(
+                timezone.now().timestamp()).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
+        size_usdt = calc.get_usdt_from_sz(self.symbol.okx, size_contract, close_price)
+        if size_contract == position.sz:
             position.is_open = False
-            position.save(update_fields=['is_open'])
             logger.warning(
                 'Virtual position is closed completely '
                 f'{close_price=} {size_contract=}, {size_usdt=}',
                 extra=self.strategy.extra_log
             )
         else:
-            size_usdt = calc.get_usdt_from_sz(self.symbol.okx, size_contract, close_price)
-            pos = position.position_data['pos'] - size_contract
+            lot_sz = str(self.symbol.okx.lot_sz)
+            pos = position.sz - size_contract
             position.position_data['pos'] = float(
                 Decimal(pos).quantize(Decimal(lot_sz), rounding=ROUND_DOWN)
             )
             position.position_data['notionalUsd'] = round(
-                position.position_data['notionalUsd'] - size_usdt, 2
+                position.size_usdt - size_usdt, 2
             )
-            position.save(update_fields=['position_data'])
             logger.warning(
                 'Virtual position is closed partially '
                 f'{close_price=} {size_contract=}, {size_usdt=}',
                 extra=self.strategy.extra_log
             )
-        self._create_close_execution(
-            position, close_price, size_contract, size_usdt, date_time, part
+        position.save(update_fields=['is_open', 'sl_tp_data', 'position_data'])
+        self.create_close_execution(
+            position, close_price, size_contract, size_usdt, date_time
         )
 
-    def _create_close_execution(
+    def create_close_execution(
         self, position: Position, close_price: float, size_contract: float,
-        size_usdt: float, date_time: str, part: int | None = None
+        size_usdt: float, date_time: str
     ) -> None:
         sub_type = 'Open long' if position.side == 'long' else 'Open short'
         open_execution = position.executions.filter(data__subType=sub_type).first()
         tp_first_part_percent = self.strategy.tp_first_part_percent
         tp_second_part_percent = 100 - tp_first_part_percent
-        if part == 1:
-            open_fee = round(open_execution.data['fee'] * tp_first_part_percent / 100, 10)
-        elif part == 2:
+        sl_tp_data = Namespace(**position.sl_tp_data)
+        if (position.sz == size_contract and sl_tp_data.first_part_closed) or sl_tp_data.second_part_closed:
             open_fee = round(open_execution.data['fee'] * tp_second_part_percent / 100, 10)
+        elif sl_tp_data.first_part_closed and not sl_tp_data.second_part_closed:
+            open_fee = round(open_execution.data['fee'] * tp_first_part_percent / 100, 10)
         else:
             open_fee = open_execution.data['fee']
         open_price = open_execution.data['px']

@@ -10,6 +10,7 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/5.0/ref/settings/
 """
 
+import logging
 from pathlib import Path
 import os
 
@@ -188,6 +189,19 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 # CELERY_TIMEZONE = 'Europe/Kiev'
 
+
+TRACE_LEVEL_NUM = 5
+logging.addLevelName(TRACE_LEVEL_NUM, 'TRACE')
+
+
+def trace(self, message, *args, **kwargs):
+    if self.isEnabledFor(TRACE_LEVEL_NUM):
+        self._log(TRACE_LEVEL_NUM, message, args, **kwargs)
+
+
+logging.Logger.trace = trace
+
+
 LOGGING = {
     'version': 1,
     'disable_existing_loggers': False,
@@ -206,7 +220,7 @@ LOGGING = {
     'handlers': {
         'console': {
             'class': 'logging.StreamHandler',
-            'level': 'DEBUG',
+            'level': 'TRACE',
             # 'formatter': 'simple',
             'formatter': 'custom',
             'stream': 'ext://sys.stdout',
@@ -229,6 +243,7 @@ LOGGING = {
         'binance_okx': {
             'handlers': ['binance_okx'],
             'level': 'DEBUG',
+            # 'level': 'TRACE',
             'propagate': True,
         },
         'celery': {

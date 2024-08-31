@@ -7,6 +7,7 @@ from celery.app.log import TaskFormatter as CeleryTaskFormatter
 from celery.signals import after_setup_task_logger, after_setup_logger
 from celery._state import get_current_task
 from celery.schedules import crontab
+from django.conf import settings
 
 
 os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'exchange.settings')
@@ -89,7 +90,9 @@ class TaskFormatter(CeleryTaskFormatter):
         super().__init__(*args, **kwargs)
         green = '\033[32m'
         reset = '\033[0m'
+        gray = '\033[90m'
         self.success_fmt = green + self._fmt + reset
+        self.trace_fmt = gray + self._fmt + reset
 
     def format(self, record):
         task = get_current_task()
@@ -104,6 +107,11 @@ class TaskFormatter(CeleryTaskFormatter):
         record.__dict__.setdefault('position', '')
         if record.levelno == logging.INFO and re.search(r'success', record.msg.lower()):
             formatter = CeleryTaskFormatter(self.success_fmt)
+            return formatter.format(record)
+        if record.levelno == settings.TRACE_LEVEL_NUM:
+            record.levelname = 'TRACE'
+            formatter = CeleryTaskFormatter(self.trace_fmt)
+            formatter.datefmt = '%d-%m-%Y %H:%M:%S'
             return formatter.format(record)
         return super().format(record)
 

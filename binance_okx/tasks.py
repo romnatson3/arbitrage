@@ -111,7 +111,7 @@ def update_symbols() -> None:
                 okx_symbol = re.sub(r'\d', '', i.symbol)
                 binance_symbol = re.sub(r'\d', '', j.symbol)
                 if i.symbol == j.symbol or okx_symbol == binance_symbol:
-                    if okx_symbol == binance_symbol:
+                    if i.symbol != j.symbol:
                         logger.info(f'Found similar symbols, okx: {i.symbol}, binance: {j.symbol}')
                     available_symbols.add(i.symbol)
                     is_active = i.is_active and j.is_active
@@ -300,7 +300,7 @@ def check_position_close_time(strategy_id: int, symbol: str) -> None:
                             close_price = position.symbol.okx.bid_price
                         elif position.side == 'short':
                             close_price = position.symbol.okx.ask_price
-                        trade.close_position(position, close_price, completely=True)
+                        trade.close_position(position, close_price, position.sz)
     except AcquireLockException:
         # logger.debug('Task check_position_close_time is already running', extra=strategy.extra_log)
         pass
@@ -323,7 +323,7 @@ def open_or_increase_position(strategy_id: int, symbol: str, position_side: str,
         lock = TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}')
         if lock.acquire():
             cache.set(f'ask_bid_prices_{symbol}', prices)
-            logger.debug(f'Caching ask_bid_prices_{symbol} {prices}', extra=strategy.extra_log)
+            logger.trace(f'Caching ask_bid_prices_{symbol} {prices}', extra=strategy.extra_log)
             position = Position.objects.filter(strategy=strategy, symbol=symbol, is_open=True).last()
             strategy._extra_log.update(symbol=symbol, position=position.id if position else None)
             if strategy.mode == Strategy.Mode.trade:
