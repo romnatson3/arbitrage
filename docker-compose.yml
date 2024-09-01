@@ -3,7 +3,7 @@ volumes:
   exchange_redis:
   exchange_static:
   exchange_rabbitmq:
-  exchange_ask_bid:
+  exchange_csv:
 
 networks:
   layer:
@@ -22,6 +22,7 @@ services:
     restart: always
     volumes:
       - exchange_static:/app/static
+      - exchange_csv:/opt/csv
     networks:
       - layer
     env_file:
@@ -54,7 +55,7 @@ services:
       - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - exchange_static:/app/static:ro
     ports:
-      - "8000:80"
+      - "52315:80"
     depends_on:
       - web
     networks:
@@ -268,8 +269,6 @@ services:
       - web
     env_file:
       - .env
-    volumes:
-      - exchange_ask_bid:/opt/ask_bid
     networks:
       - layer
     logging:
@@ -293,7 +292,7 @@ services:
     env_file:
       - .env
     volumes:
-      - exchange_ask_bid:/opt/ask_bid
+      - exchange_csv:/opt/csv
     networks:
       - layer
     logging:

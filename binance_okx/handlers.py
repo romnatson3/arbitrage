@@ -7,6 +7,7 @@ from datetime import datetime
 from types import SimpleNamespace as Namespace
 from django_redis import get_redis_connection
 from django.core.cache import cache
+from django.conf import settings
 from exchange.celery import app
 from .models import Strategy
 from .misc import convert_dict_values
@@ -69,22 +70,22 @@ def write_ask_bid_to_csv_and_cache_by_symbol(data: dict) -> None:
     pipeline.execute_command('zadd', key, timestamp, data)
     pipeline.execute_command('zremrangebyscore', key, 0, one_minute_ago)
     pipeline.execute()
-    # if cache.get('write_ask_bid_to_csv', False):
-    file_path = pathlib.Path('/opt/ask_bid') / f'{symbol}.csv'
-    if not file_path.parent.exists():
-        os.mkdir(file_path.parent)
-    header = ['symbol', 'date', 'time', 'binance_ask_price', 'binance_bid_price', 'okx_ask_price',
-              'okx_ask_size', 'okx_bid_price', 'okx_bid_size']
-    with open(file_path, 'a', newline='') as file:
-        writer = csv.writer(file, delimiter=';')
-        if file.tell() == 0:
-            writer.writerow(header)
-        date = date_time.split(' ')[0]
-        time = date_time.split(' ')[1]
-        writer.writerow([
-            symbol, date, time, binance_ask_price_str, binance_bid_price_str, okx_ask_price_str,
-            okx_ask_size_str, okx_bid_price_str, okx_bid_size_str
-        ])
+    if cache.get('write_ask_bid_to_csv', False):
+        file_path = pathlib.Path(settings.CSV_PATH) / f'{symbol}.csv'
+        if not file_path.parent.exists():
+            os.mkdir(file_path.parent)
+        header = ['symbol', 'date', 'time', 'binance_ask_price', 'binance_bid_price', 'okx_ask_price',
+                  'okx_ask_size', 'okx_bid_price', 'okx_bid_size']
+        with open(file_path, 'a', newline='') as file:
+            writer = csv.writer(file, delimiter=';')
+            if file.tell() == 0:
+                writer.writerow(header)
+            date = date_time.split(' ')[0]
+            time = date_time.split(' ')[1]
+            writer.writerow([
+                symbol, date, time, binance_ask_price_str, binance_bid_price_str, okx_ask_price_str,
+                okx_ask_size_str, okx_bid_price_str, okx_bid_size_str
+            ])
 
 
 def save_okx_ask_bid_to_cache(data: dict) -> None:

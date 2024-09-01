@@ -120,7 +120,7 @@ class OkxSymbol(BaseModel):
 
     @property
     def lot_sz(self) -> str:
-        return float(self.data['lotSz'])
+        return self.data['lotSz']
 
     @property
     def ct_val(self) -> float:

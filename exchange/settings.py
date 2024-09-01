@@ -189,6 +189,7 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_TIMEZONE = 'UTC'
 # CELERY_TIMEZONE = 'Europe/Kiev'
 
+CSV_PATH = os.environ.get('CSV_PATH', '/opt/csv/')
 
 TRACE_LEVEL_NUM = 5
 logging.addLevelName(TRACE_LEVEL_NUM, 'TRACE')

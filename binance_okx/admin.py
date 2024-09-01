@@ -1,5 +1,6 @@
 import logging
 import csv
+import pathlib
 from types import SimpleNamespace as Namespace
 from django.contrib import admin
 from django.utils import timezone
@@ -8,6 +9,10 @@ from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
 from django.contrib.auth import get_user_model
 from django.db.models import QuerySet
 from django.http import HttpResponse
+from django.urls import path, re_path, reverse
+from django.shortcuts import render, redirect
+from django.core.cache import cache
+from django.conf import settings
 from io import StringIO
 from .forms import CustomUserCreationForm, CustomUserChangeForm
 from .models import (
@@ -251,6 +256,7 @@ class StrategyAdmin(admin.ModelAdmin):
     save_on_top = True
     form = StrategyForm
     actions = ['toggle_enabled']
+    change_list_template = 'admin/strategy_change_list.html'
 
     def get_queryset(self, request) -> QuerySet:
         qs = super().get_queryset(request)
@@ -272,6 +278,50 @@ class StrategyAdmin(admin.ModelAdmin):
         for strategy in queryset:
             strategy.enabled = not strategy.enabled
             strategy.save()
+
+    def get_urls(self):
+        urls = super().get_urls()
+        csv_url = [
+            path('csv_list/', self.csv_list, name='csv_list'),
+            re_path(r'csv_list/(?P<filename>.+\.csv)', self.csv_list, name='csv_list')
+        ]
+        return csv_url + urls
+
+    def csv_list(self, request, *args, **kwargs) -> HttpResponse:
+        print(request.GET)
+        print('args', args)
+        print('kwargs', kwargs)
+
+        context = {}
+        path = pathlib.Path(settings.CSV_PATH)
+        csv_files = list(path.glob('*.csv'))
+        if 'start_recording' in request.GET:
+            cache.set('write_ask_bid_to_csv', True)
+            logger.info('Recording started', extra={'created_by': request.user})
+            return redirect(reverse('admin:csv_list'))
+        elif 'stop_recording' in request.GET:
+            cache.set('write_ask_bid_to_csv', False)
+            logger.info('Recording stopped', extra={'created_by': request.user})
+            return redirect(reverse('admin:csv_list'))
+        elif 'delete_all' in request.GET:
+            for file in csv_files:
+                if file.is_file():
+                    file.unlink()
+                    logger.info(f'File {file} deleted', extra={'created_by': request.user})
+            return redirect(reverse('admin:csv_list'))
+        elif 'filename' in kwargs:
+            filename = kwargs['filename']
+            if filename:
+                file_path = path.joinpath(filename)
+                if file_path.is_file():
+                    with open(file_path, 'r') as f:
+                        response = HttpResponse(
+                            f.read(), content_type='text/csv', charset='utf-8-sig')
+                        response['Content-Disposition'] = f'attachment; filename="{filename}"'
+                        return response
+        context['files'] = [i.name for i in csv_files]
+        context['recording'] = cache.get('write_ask_bid_to_csv', False)
+        return render(request, 'admin/csv_list.html', context)
 
 
 @admin.register(Position)
