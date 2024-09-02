@@ -530,13 +530,13 @@ def get_take_profit_grid(position: Position, entry_price: float, spread_percent:
     tp_second_part = round_by_lot_sz(tp_second_part, lot_sz)
     return dict(
         tp_first_price=float(
-            Decimal(tp_first_price).quantize(
-                Decimal(str(tick_size)), rounding=ROUND_DOWN)
+            Decimal(tp_first_price)
+            .quantize(Decimal(str(tick_size)), rounding=ROUND_DOWN)
         ),
         tp_first_part=tp_first_part,
         tp_second_price=float(
-            Decimal(tp_second_price).quantize(
-                Decimal(str(tick_size)), rounding=ROUND_DOWN)
+            Decimal(tp_second_price)
+            .quantize(Decimal(str(tick_size)), rounding=ROUND_DOWN)
         ),
         tp_second_part=tp_second_part
     )

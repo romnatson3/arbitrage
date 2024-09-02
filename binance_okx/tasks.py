@@ -170,7 +170,7 @@ def update_bills():
                     logger.exception(e)
                     continue
     except AcquireLockException:
-        logger.debug('Task update_bills is already running')
+        logger.debug('Task update_bills is currently running')
     except Exception as e:
         logger.exception(e)
         raise e
@@ -180,8 +180,13 @@ def update_bills():
 def create_execution(position_id: int) -> None:
     try:
         position = Position.objects.get(id=position_id)
-        position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
-        order_ids = Bill.objects.filter(data__tradeId__in=position.trade_ids).values_list('data__ordId', flat=True)
+        position.strategy._extra_log.update(
+            symbol=position.symbol.symbol, position=position.id
+        )
+        order_ids = (
+            Bill.objects.filter(data__tradeId__in=position.trade_ids)
+            .values_list('data__ordId', flat=True)
+        )
         bills = Bill.objects.filter(data__ordId__in=order_ids).all()
         executions = []
         for bill in bills:
@@ -196,8 +201,11 @@ def create_execution(position_id: int) -> None:
         executions = Execution.objects.bulk_create(executions, ignore_conflicts=True)
         for execution in executions:
             logger.info(
-                f'Created execution bill_id={execution.data["billId"]}, trade_id={execution.data["tradeId"]}, '
-                f'subType={execution.data["subType"]}, sz={execution.data["sz"]}, px={execution.data["px"]}, '
+                f'Created execution bill_id={execution.data["billId"]}, '
+                f'trade_id={execution.data["tradeId"]}, '
+                f'subType={execution.data["subType"]}, '
+                f'sz={execution.data["sz"]}, '
+                f'px={execution.data["px"]}, '
                 f'ordId={execution.data["ordId"]}',
                 extra=position.strategy.extra_log
             )
@@ -214,29 +222,28 @@ def create_or_update_position(data: dict) -> None:
         symbol: Symbol = Symbol.objects.get(symbol=symbol)
         account = Account.objects.get(id=data['account_id'])
         try:
-            strategy = Strategy.objects.get(enabled=True, mode='trade', second_account=account, symbols=symbol)
+            strategy = Strategy.objects.get(
+                enabled=True, mode='trade', second_account=account, symbols=symbol)
         except Strategy.DoesNotExist:
-            logger.error(f'Not found enabled strategy for symbol={symbol.symbol} and account={account.name}')
+            logger.error(
+                f'Not found enabled strategy for symbol={symbol.symbol} '
+                f'and account={account.name}'
+            )
             return
         strategy._extra_log.update(symbol=symbol.symbol)
-        positions = sorted(
-            filter(lambda x: x.symbol == symbol and x.is_open is True, strategy.positions.all()),
-            key=lambda x: x.id, reverse=True
-        )
-        if positions:
-            position = positions[0]
+        position = strategy.get_last_trade_open_position(symbol.symbol)
+        if position:
             strategy._extra_log.update(position=position.id)
-        else:
-            position = None
         if not position and data['pos'] != 0:
             position = Position.objects.create(
-                position_data=data, strategy=strategy, symbol=symbol, account=account,
-                trade_ids=[data['tradeId']]
+                position_data=data, strategy=strategy, symbol=symbol,
+                account=account, trade_ids=[data['tradeId']]
             )
             strategy._extra_log.update(position=position.id)
             logger.info(
-                f'Created new position in database, avgPx={data["avgPx"]}, sz={data["pos"]}, '
-                f'usdt={data["notionalUsd"]}, side={data["posSide"]}',
+                f'Created new position in database, avgPx={data["avgPx"]}, '
+                f'sz={data["pos"]}, usdt={data["notionalUsd"]}, '
+                f'side={data["posSide"]}',
                 extra=strategy.extra_log
             )
             place_orders_after_open_trade_position(position)
@@ -253,8 +260,9 @@ def create_or_update_position(data: dict) -> None:
                 position.trade_ids.append(data['tradeId'])
                 position.save(update_fields=['position_data', 'trade_ids'])
                 logger.info(
-                    f'Updated position data in database, avgPx={data["avgPx"]}, sz={data["pos"]}, '
-                    f'usdt={data["notionalUsd"]}, side={data["posSide"]}',
+                    f'Updated position data in database, avgPx={data["avgPx"]}, '
+                    f'sz={data["pos"]}, usdt={data["notionalUsd"]}, '
+                    f'side={data["posSide"]}',
                     extra=strategy.extra_log
                 )
                 if position.sl_tp_data['increased_position']:
@@ -302,7 +310,10 @@ def check_position_close_time(strategy_id: int, symbol: str) -> None:
                             close_price = position.symbol.okx.ask_price
                         trade.close_position(position, close_price, position.sz)
     except AcquireLockException:
-        # logger.debug('Task check_position_close_time is already running', extra=strategy.extra_log)
+        logger.debug(
+            'Task check_position_close_time is currently running',
+            extra=strategy.extra_log
+        )
         pass
     except ClosePositionException as e:
         logger.error(e, extra=strategy.extra_log)
@@ -342,7 +353,10 @@ def open_or_increase_position(strategy_id: int, symbol: str, position_side: str,
                         extra=strategy.extra_log
                     )
         else:
-            # logger.debug('Task open_or_increase_position is still running', extra=strategy.extra_log)
+            logger.debug(
+                'Task open_or_increase_position is currently running',
+                extra=strategy.extra_log
+            )
             pass
     except Exception as e:
         logger.exception(e, extra=strategy.extra_log)
@@ -360,7 +374,9 @@ def check_condition(data: dict) -> None:
                 check_all_conditions(strategy, symbol, int(data['E']))
             )
             if condition_met:
-                open_or_increase_position.delay(strategy.id, symbol.symbol, position_side, prices)
+                open_or_increase_position.delay(
+                    strategy.id, symbol.symbol, position_side, prices
+                )
     except Exception as e:
         logger.exception(e)
         raise e
@@ -380,14 +396,22 @@ def run_websocket_okx_positions() -> None:
                 if name in threads:
                     thread = threads[name]
                     if thread.is_alive():
-                        logger.debug(f'{account.name}. WebSocketOkxPositions is now running')
+                        logger.debug(
+                            f'{account.name}. WebSocketOkxPositions '
+                            'is now running'
+                        )
                         continue
                     else:
-                        logger.debug(f'{account.name}. WebSocketOkxPositions is exist but not running')
+                        logger.debug(
+                            f'{account.name}. WebSocketOkxPositions is exist '
+                            'but not running'
+                        )
                         thread.kill()
                 ws_okx_positions = WebSocketOkxPositions(account=account)
                 ws_okx_positions.start()
-                ws_okx_positions.add_handler(lambda data: create_or_update_position.delay(data))
+                ws_okx_positions.add_handler(
+                    lambda data: create_or_update_position.delay(data)
+                )
                 time.sleep(3)
     except AcquireLockException:
         logger.debug('Task run_websocket_okx_positions is now running')
@@ -410,10 +434,16 @@ def run_websocket_okx_orders() -> None:
                 if name in threads:
                     thread = threads[name]
                     if thread.is_alive():
-                        logger.debug(f'{account.name}. WebSocketOkxOrders is now running')
+                        logger.debug(
+                            f'{account.name}. WebSocketOkxOrders '
+                            'is now running'
+                        )
                         continue
                     else:
-                        logger.debug(f'{account.name}. WebSocketOkxOrders is exist but not running')
+                        logger.debug(
+                            f'{account.name}. WebSocketOkxOrders is exist '
+                            'but not running'
+                        )
                         thread.kill()
                 ws_okx_orders = WebSocketOkxOrders(account=account)
                 ws_okx_orders.start()
@@ -449,7 +479,9 @@ def run_websocket_okx_last_price() -> None:
                 logger.debug(f'{ws_okx_last_price.name} all threads are running')
                 return
             ws_okx_last_price.start()
-            ws_okx_last_price.add_handler(lambda data: closing_position_by_limit.delay(data))
+            ws_okx_last_price.add_handler(
+                lambda data: closing_position_by_limit.delay(data)
+            )
             time.sleep(3)
     except AcquireLockException:
         logger.debug('Task run_websocket_okx_last_price is now running')

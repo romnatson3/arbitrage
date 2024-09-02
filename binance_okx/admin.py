@@ -216,8 +216,8 @@ class StrategyAdmin(admin.ModelAdmin):
         js = ('binance_okx/strategy.js',)
 
     list_display = (
-        'id', 'name', 'enabled', 'mode', 'position_size', 'close_position_type',
-        'close_position_parts', '_symbols', 'updated_at'
+        'id', 'name', 'enabled', 'mode', '_account', 'position_size',
+        'close_position_type', 'close_position_parts', '_symbols', 'updated_at'
     )
     search_fields = ('name',)
     list_filter = ()
@@ -272,6 +272,10 @@ class StrategyAdmin(admin.ModelAdmin):
     @admin.display(description='Symbols')
     def _symbols(self, obj) -> str:
         return ', '.join(obj.symbols.values_list('symbol', flat=True))
+
+    @admin.display(description='Account')
+    def _account(self, obj) -> str:
+        return obj.second_account.name
 
     @admin.action(description='Toggle enabled/disabled')
     def toggle_enabled(self, request, queryset):

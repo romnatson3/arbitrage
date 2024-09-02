@@ -317,10 +317,14 @@ class Strategy(BaseModel):
         )
 
     def get_last_trade_open_position(self, symbol: str) -> QuerySet:
-        return self.positions.filter(mode=Strategy.Mode.trade, is_open=True, symbol__symbol=symbol).order_by('-id').first()
+        return self.positions.filter(
+            mode=Strategy.Mode.trade, is_open=True, symbol__symbol=symbol
+        ).order_by('-id').first()
 
     def get_last_emulate_open_position(self, symbol: str) -> QuerySet:
-        return self.positions.filter(mode=Strategy.Mode.emulate, is_open=True, symbol__symbol=symbol).order_by('-id').first()
+        return self.positions.filter(
+            mode=Strategy.Mode.emulate, is_open=True, symbol__symbol=symbol
+        ).order_by('-id').first()
 
     @property
     def open_fee(self) -> float:
