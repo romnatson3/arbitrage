@@ -1,7 +1,6 @@
 import logging
 import random
 import time
-from math import floor
 from decimal import Decimal, ROUND_DOWN
 from datetime import datetime
 from django.utils import timezone

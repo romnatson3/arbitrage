@@ -62,20 +62,15 @@ class StrategyForm(forms.ModelForm):
         search_duration: int = cleaned_data.get('search_duration')
         if not second_account:
             raise forms.ValidationError('Account is required')
-        # if not first_account or not second_account:
-        #     raise forms.ValidationError('First account and second account are required')
-        # if first_account.exchange == second_account.exchange:
-        #     raise forms.ValidationError('First account and second account must be different exchanges')
         if position_size <= 0:
             self.add_error('position_size', 'Position size must be greater than 0')
         if taker_fee <= 0 and close_position_type == 'market':
             self.add_error('taker_fee', 'Taker fee must be greater than 0')
         if maker_fee <= 0 and close_position_type == 'limit':
             self.add_error('maker_fee', 'Maker fee must be greater than 0')
-        if take_profit <= 0:
-            self.add_error('take_profit', 'Take profit must be greater than 0')
+        if take_profit < 0:
+            self.add_error('take_profit', 'Take profit must be greater than or equal to 0')
         if close_position_parts:
-            # if tp_first_price_percent <= 0 or tp_first_part_percent <= 0 or tp_second_price_percent <= 0 or tp_second_part_percent <= 0:
             if tp_first_price_percent <= 0 or tp_first_part_percent <= 0 or tp_second_price_percent <= 0:
                 self.add_error('tp_first_price_percent', 'Take profit price percent must be greater than 0')
                 self.add_error('tp_first_part_percent', 'Take profit part percent must be greater than 0')
