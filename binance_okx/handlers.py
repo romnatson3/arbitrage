@@ -552,18 +552,18 @@ def closing_emulate_position_market_stop_loss(
                 trade = OkxEmulateTrade(strategy, position.symbol)
                 sl_tp_data = Namespace(**position.sl_tp_data)
                 if sl_tp_data.stop_loss_breakeven_order_id:
-                    if position.side == 'long' and bid_price >= sl_tp_data.stop_loss_breakeven:
+                    if position.side == 'long' and bid_price <= sl_tp_data.stop_loss_breakeven:
                         logger.info(
-                            f'Bid price {bid_price} >= stop loss breakeven price '
+                            f'Bid price {bid_price} <= stop loss breakeven price '
                             f'{sl_tp_data.stop_loss_breakeven}',
                             extra=strategy.extra_log
                         )
                         trade.close_position(
                             position, bid_price, position.sz, date_time=date_time
                         )
-                    elif position.side == 'short' and ask_price <= sl_tp_data.stop_loss_breakeven:
+                    elif position.side == 'short' and ask_price >= sl_tp_data.stop_loss_breakeven:
                         logger.info(
-                            f'Ask price {ask_price} <= stop loss breakeven price '
+                            f'Ask price {ask_price} >= stop loss breakeven price '
                             f'{sl_tp_data.stop_loss_breakeven}',
                             extra=strategy.extra_log
                         )
