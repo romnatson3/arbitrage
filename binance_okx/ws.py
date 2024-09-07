@@ -240,7 +240,8 @@ class WebSocketOkxLastPrice(WebSocketOkxAskBid):
     def _post_message_handler(self, data: dict) -> None | dict:
         previous_last_price = self._previous_last_price.get(data['instId'])
         if previous_last_price:
-            if previous_last_price[0] == data['last'] and previous_last_price[1] == data['lastSz']:
+            # if previous_last_price[0] == data['last'] and previous_last_price[1] == data['lastSz']:
+            if previous_last_price[1] == data['lastSz']:
                 return
         self._previous_last_price[data['instId']] = [data['last'], data['lastSz']]
         keys = ['instId', 'last', 'lastSz', 'ts']

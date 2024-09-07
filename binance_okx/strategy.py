@@ -12,28 +12,33 @@ from .exceptions import PlaceOrderException
 logger = logging.getLogger(__name__)
 
 
-def check_funding_time(strategy: Strategy, symbol: Symbol, position_side: str) -> bool:
+def funding_time_too_close(strategy: Strategy, symbol: Symbol, position_side: str) -> bool:
     funding_time = symbol.okx.funding_time
     edge_time = funding_time - timezone.timedelta(minutes=strategy.time_to_funding)
     if timezone.localtime() > edge_time:
         logger.warning(f'Funding time {funding_time} is too close', extra=strategy.extra_log)
         if not strategy.only_profit:
-            logger.warning('Only profit mode is disabled. Skip', extra=strategy.extra_log)
-            return False
+            logger.warning(
+                'Only profit mode is disabled. Position will not open',
+                extra=strategy.extra_log
+            )
+            return True
         else:
             funding_rate = symbol.okx.funding_rate
             if (funding_rate > 0 and position_side == 'long') or (funding_rate < 0 and position_side == 'short'):
                 logger.warning(
-                    f'Funding rate {funding_rate:.5f} is unfavorable for the current position. Position will not open',
+                    f'Funding rate {funding_rate:.5f} is unfavorable for '
+                    f'the current position. Position will not open',
                     extra=strategy.extra_log
                 )
-                return False
+                return True
             else:
                 logger.warning(
-                    f'Funding rate {funding_rate:.5f} is favorable for the {position_side} position. Position will open',
+                    f'Funding rate {funding_rate:.5f} is favorable for the '
+                    f'{position_side} position. Position will open',
                     extra=strategy.extra_log
                 )
-    return True
+    return False
 
 
 def time_close_position(strategy: Strategy, position: Position) -> bool:
@@ -133,7 +138,7 @@ def get_pre_enter_data(strategy: Strategy, symbol: Symbol, position_side: str, p
 
 
 def open_emulate_position(strategy: Strategy, symbol: Symbol, position_side: str, prices: dict) -> None:
-    if not check_funding_time(strategy, symbol, position_side):
+    if funding_time_too_close(strategy, symbol, position_side):
         return
     trade = OkxEmulateTrade(strategy, symbol)
     open_price, size_contract, size_usdt = get_pre_enter_data(strategy, symbol, position_side, prices)
@@ -144,7 +149,7 @@ def open_emulate_position(strategy: Strategy, symbol: Symbol, position_side: str
 
 
 def open_trade_position(strategy: Strategy, symbol: Symbol, position_side: str, prices: dict) -> None:
-    if not check_funding_time(strategy, symbol, position_side):
+    if funding_time_too_close(strategy, symbol, position_side):
         TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}').release()
         return
     _, size_contract, size_usdt = get_pre_enter_data(strategy, symbol, position_side, prices)
@@ -170,11 +175,11 @@ def place_orders_after_open_trade_position(position: Position) -> None:
         logger.info('Placing orders after opening position', extra=position.strategy.extra_log)
         strategy = position.strategy
         symbol = position.symbol
-        prices = cache.get(f'ask_bid_prices_{symbol}')
+        prices = cache.get(f'okx_ask_bid_prices_{symbol}')
         if not prices:
             logger.error('Prices not found in cache', extra=strategy.extra_log)
             return
-        cache.delete(f'ask_bid_prices_{symbol}')
+        cache.delete(f'okx_ask_bid_prices_{symbol}')
         prices_entry = calculation_delta_and_points_for_entry(symbol, position.side, prices)
         position = fill_position_data(strategy, position, prices, prices_entry)
         sl_tp_data = Namespace(**position.sl_tp_data)
@@ -218,11 +223,11 @@ def calc_tp_and_place_orders_after_increase_trade_position(position: Position) -
             extra=strategy.extra_log
         )
         entry_price = position.entry_price
-        prices = cache.get(f'ask_bid_prices_{symbol}')
+        prices = cache.get(f'okx_ask_bid_prices_{symbol}')
         if not prices:
             logger.error('Prices not found in cache', extra=strategy.extra_log)
             return
-        cache.delete(f'ask_bid_prices_{symbol}')
+        cache.delete(f'okx_ask_bid_prices_{symbol}')
         take_profit_grid = get_take_profit_grid(
             position, entry_price, prices['spread_percent'], position.side
         )

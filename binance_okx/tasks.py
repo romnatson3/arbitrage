@@ -310,10 +310,10 @@ def check_position_close_time(strategy_id: int, symbol: str) -> None:
                             close_price = position.symbol.okx.ask_price
                         trade.close_position(position, close_price, position.sz)
     except AcquireLockException:
-        logger.debug(
-            'Task check_position_close_time is currently running',
-            extra=strategy.extra_log
-        )
+        # logger.debug(
+        #     'Task check_position_close_time is currently running',
+        #     extra=strategy.extra_log
+        # )
         pass
     except ClosePositionException as e:
         logger.error(e, extra=strategy.extra_log)
@@ -333,8 +333,8 @@ def open_or_increase_position(strategy_id: int, symbol: str, position_side: str,
     try:
         lock = TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}')
         if lock.acquire():
-            cache.set(f'ask_bid_prices_{symbol}', prices)
-            logger.trace(f'Caching ask_bid_prices_{symbol} {prices}', extra=strategy.extra_log)
+            cache.set(f'okx_ask_bid_prices_{symbol}', prices)
+            logger.trace(f'Caching okx_ask_bid_prices_{symbol} {prices}', extra=strategy.extra_log)
             position = Position.objects.filter(strategy=strategy, symbol=symbol, is_open=True).last()
             strategy._extra_log.update(symbol=symbol, position=position.id if position else None)
             if strategy.mode == Strategy.Mode.trade:
@@ -353,10 +353,10 @@ def open_or_increase_position(strategy_id: int, symbol: str, position_side: str,
                         extra=strategy.extra_log
                     )
         else:
-            logger.debug(
-                'Task open_or_increase_position is currently running',
-                extra=strategy.extra_log
-            )
+            # logger.debug(
+            #     'Task open_or_increase_position is currently running',
+            #     extra=strategy.extra_log
+            # )
             pass
     except Exception as e:
         logger.exception(e, extra=strategy.extra_log)
