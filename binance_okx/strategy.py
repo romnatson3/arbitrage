@@ -165,7 +165,7 @@ def increase_trade_position(strategy: Strategy, position: Position, prices: dict
         trade = OkxTrade(strategy, position.symbol, size_contract, position.side)
         trade.open_position(increase=True)
     else:
-        logger.info('Not all conditions are met to increase the position', extra=strategy.extra_log)
+        logger.debug('Not all conditions are met to increase the position', extra=strategy.extra_log)
         TaskLock(f'open_or_increase_position_{strategy.id}_{position.symbol}').release()
 
 

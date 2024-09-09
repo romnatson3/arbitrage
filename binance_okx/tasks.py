@@ -177,6 +177,76 @@ def update_bills():
 
 
 @app.task
+def create_or_update_position(data: dict) -> None:
+    try:
+        data = convert_dict_values(data)
+        symbol: str = ''.join(data['instId'].split('-')[:-1])
+        symbol: Symbol = Symbol.objects.get(symbol=symbol)
+        account = Account.objects.get(id=data['account_id'])
+        try:
+            strategy = Strategy.objects.get(
+                enabled=True, mode='trade', second_account=account, symbols=symbol)
+        except Strategy.DoesNotExist:
+            logger.error(
+                f'Not found enabled strategy for symbol={symbol.symbol} '
+                f'and account={account.name}'
+            )
+            return
+        strategy._extra_log.update(symbol=symbol.symbol)
+        position = strategy.get_last_trade_open_position(symbol.symbol)
+        if position:
+            strategy._extra_log.update(position=position.id)
+            if data['pos'] == 0:
+                position.is_open = False
+                position.trade_ids.append(data['tradeId'])
+                position.save(update_fields=['is_open', 'trade_ids'])
+                logger.info(
+                    f'Position was closed, trade_id={data["tradeId"]}',
+                    extra=strategy.extra_log
+                )
+            else:
+                previous_pos = position.position_data['pos']
+                position.position_data = data
+                position.trade_ids.append(data['tradeId'])
+                position.save(update_fields=['position_data', 'trade_ids'])
+                logger.info(
+                    f'Updated position data in database, avgPx={data["avgPx"]}, '
+                    f'sz={data["pos"]}, usdt={data["notionalUsd"]}, '
+                    f'side={data["posSide"]}, trade_id={data["tradeId"]}',
+                    extra=strategy.extra_log
+                )
+                if position.sl_tp_data['increased_position']:
+                    if previous_pos < data['pos']:
+                        calc_tp_and_place_orders_after_increase_trade_position(position)
+        else:
+            if data['pos'] != 0:
+                position = Position.objects.create(
+                    position_data=data, strategy=strategy, symbol=symbol,
+                    account=account, trade_ids=[data['tradeId']]
+                )
+                strategy._extra_log.update(position=position.id)
+                logger.info(
+                    f'Created new position in database, avgPx={data["avgPx"]}, '
+                    f'sz={data["pos"]}, usdt={data["notionalUsd"]}, '
+                    f'side={data["posSide"]}, trade_id={data["tradeId"]}',
+                    extra=strategy.extra_log
+                )
+                place_orders_after_open_trade_position(position)
+            else:
+                logger.error(
+                    'Not found open position in database, but position data not empty: '
+                    f'pos={data["pos"]}, side={data["posSide"]}, '
+                    f'trade_id={data["tradeId"]}, account={account.name}',
+                    extra=strategy.extra_log
+                )
+                return
+        create_execution.apply_async(args=(position.id,), countdown=5)
+    except Exception as e:
+        logger.exception(e)
+        raise e
+
+
+@app.task
 def create_execution(position_id: int) -> None:
     try:
         position = Position.objects.get(id=position_id)
@@ -209,66 +279,6 @@ def create_execution(position_id: int) -> None:
                 f'ordId={execution.data["ordId"]}',
                 extra=position.strategy.extra_log
             )
-    except Exception as e:
-        logger.exception(e)
-        raise e
-
-
-@app.task
-def create_or_update_position(data: dict) -> None:
-    try:
-        data = convert_dict_values(data)
-        symbol: str = ''.join(data['instId'].split('-')[:-1])
-        symbol: Symbol = Symbol.objects.get(symbol=symbol)
-        account = Account.objects.get(id=data['account_id'])
-        try:
-            strategy = Strategy.objects.get(
-                enabled=True, mode='trade', second_account=account, symbols=symbol)
-        except Strategy.DoesNotExist:
-            logger.error(
-                f'Not found enabled strategy for symbol={symbol.symbol} '
-                f'and account={account.name}'
-            )
-            return
-        strategy._extra_log.update(symbol=symbol.symbol)
-        position = strategy.get_last_trade_open_position(symbol.symbol)
-        if position:
-            strategy._extra_log.update(position=position.id)
-        if not position and data['pos'] != 0:
-            position = Position.objects.create(
-                position_data=data, strategy=strategy, symbol=symbol,
-                account=account, trade_ids=[data['tradeId']]
-            )
-            strategy._extra_log.update(position=position.id)
-            logger.info(
-                f'Created new position in database, avgPx={data["avgPx"]}, '
-                f'sz={data["pos"]}, usdt={data["notionalUsd"]}, '
-                f'side={data["posSide"]}',
-                extra=strategy.extra_log
-            )
-            place_orders_after_open_trade_position(position)
-        else:
-            if data['pos'] == 0:
-                position.is_open = False
-                if data['tradeId']:
-                    position.trade_ids.append(data['tradeId'])
-                position.save(update_fields=['is_open', 'trade_ids'])
-                logger.info('Position was closed', extra=strategy.extra_log)
-            else:
-                previous_pos = position.position_data['pos']
-                position.position_data = data
-                position.trade_ids.append(data['tradeId'])
-                position.save(update_fields=['position_data', 'trade_ids'])
-                logger.info(
-                    f'Updated position data in database, avgPx={data["avgPx"]}, '
-                    f'sz={data["pos"]}, usdt={data["notionalUsd"]}, '
-                    f'side={data["posSide"]}',
-                    extra=strategy.extra_log
-                )
-                if position.sl_tp_data['increased_position']:
-                    if previous_pos < data['pos']:
-                        calc_tp_and_place_orders_after_increase_trade_position(position)
-        create_execution.apply_async(args=(position.id,), countdown=5)
     except Exception as e:
         logger.exception(e)
         raise e
@@ -310,11 +320,10 @@ def check_position_close_time(strategy_id: int, symbol: str) -> None:
                             close_price = position.symbol.okx.ask_price
                         trade.close_position(position, close_price, position.sz)
     except AcquireLockException:
-        # logger.debug(
-        #     'Task check_position_close_time is currently running',
-        #     extra=strategy.extra_log
-        # )
-        pass
+        logger.trace(
+            'Task check_position_close_time is currently running',
+            extra=strategy.extra_log
+        )
     except ClosePositionException as e:
         logger.error(e, extra=strategy.extra_log)
         if re.search('Position .+? exist', str(e)):
@@ -341,23 +350,29 @@ def open_or_increase_position(strategy_id: int, symbol: str, position_side: str,
                 if position:
                     if position.side == position_side:
                         increase_trade_position(strategy, position, prices)
+                    else:
+                        logger.debug(
+                            'Trying to open position with different side '
+                            f'current side={position.side}, new side={position_side}',
+                            extra=strategy.extra_log
+                        )
+                        lock.release()
                 else:
                     open_trade_position(strategy, symbol, position_side, prices)
             elif strategy.mode == Strategy.Mode.emulate:
                 if not position:
                     open_emulate_position(strategy, symbol, position_side, prices)
-                    lock.release()
                 else:
                     logger.debug(
                         'Current position is still open. Skip open new position',
                         extra=strategy.extra_log
                     )
+                lock.release()
         else:
-            # logger.debug(
-            #     'Task open_or_increase_position is currently running',
-            #     extra=strategy.extra_log
-            # )
-            pass
+            logger.trace(
+                'Task open_or_increase_position is currently running',
+                extra=strategy.extra_log
+            )
     except Exception as e:
         logger.exception(e, extra=strategy.extra_log)
         raise e

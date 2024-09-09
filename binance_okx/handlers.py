@@ -188,13 +188,15 @@ def orders_handler(data: dict) -> None:
                 if sl_tp_data.tp_first_limit_order_id == data.ordId:
                     logger.info(
                         'First take profit limit order '
-                        f'{sl_tp_data.tp_first_limit_order_id} is filled',
+                        f'{sl_tp_data.tp_first_limit_order_id} is filled, '
+                        f'tradeId={data.tradeId}',
                         extra=strategy.extra_log
                     )
                     position.sl_tp_data['first_part_closed'] = True
-                    position.save(update_fields=['sl_tp_data'])
+                    position.trade_ids.append(data.tradeId)
+                    position.save(update_fields=['sl_tp_data', 'trade_ids'])
                     logger.info(
-                        f'First part {sl_tp_data.tp_first_part} of position is closed',
+                        f'First part sz={sl_tp_data.tp_first_part} of position is closed',
                         extra=strategy.extra_log
                     )
                     if strategy.stop_loss_breakeven and not sl_tp_data.stop_loss_breakeven_order_id:
@@ -212,37 +214,43 @@ def orders_handler(data: dict) -> None:
                 elif sl_tp_data.tp_second_limit_order_id == data.ordId:
                     logger.info(
                         'Second take profit limit order '
-                        f'{sl_tp_data.tp_second_limit_order_id} is filled',
+                        f'{sl_tp_data.tp_second_limit_order_id} is filled, '
+                        f'tradeId={data.tradeId}',
                         extra=strategy.extra_log
                     )
                     position.sl_tp_data['second_part_closed'] = True
-                    position.save(update_fields=['sl_tp_data'])
+                    position.trade_ids.append(data.tradeId)
+                    position.save(update_fields=['sl_tp_data', 'trade_ids'])
                     logger.info(
-                        f'Second part {sl_tp_data.tp_second_part} of position is closed',
+                        f'Second part sz={sl_tp_data.tp_second_part} of position is closed',
                         extra=strategy.extra_log
                     )
                 elif sl_tp_data.tp_third_limit_order_id == data.ordId:
                     logger.info(
                         'Third take profit limit order '
-                        f'{sl_tp_data.tp_third_limit_order_id} is filled',
+                        f'{sl_tp_data.tp_third_limit_order_id} is filled, '
+                        f'tradeId={data.tradeId}',
                         extra=strategy.extra_log
                     )
                     position.sl_tp_data['third_part_closed'] = True
-                    position.save(update_fields=['sl_tp_data'])
+                    position.trade_ids.append(data.tradeId)
+                    position.save(update_fields=['sl_tp_data', 'trade_ids'])
                     logger.info(
-                        f'Third part {sl_tp_data.tp_third_part} of position is closed',
+                        f'Third part sz={sl_tp_data.tp_third_part} of position is closed',
                         extra=strategy.extra_log
                     )
                 elif sl_tp_data.tp_fourth_limit_order_id == data.ordId:
                     logger.info(
                         f'Fourth take profit limit order '
-                        f'{sl_tp_data.tp_fourth_limit_order_id} is filled',
+                        f'{sl_tp_data.tp_fourth_limit_order_id} is filled, '
+                        f'tradeId={data.tradeId}',
                         extra=strategy.extra_log
                     )
                     position.sl_tp_data['fourth_part_closed'] = True
-                    position.save(update_fields=['sl_tp_data'])
+                    position.trade_ids.append(data.tradeId)
+                    position.save(update_fields=['sl_tp_data', 'trade_ids'])
                     logger.info(
-                        f'Fourth part {sl_tp_data.tp_fourth_part} of position is closed',
+                        f'Fourth part sz={sl_tp_data.tp_fourth_part} of position is closed',
                         extra=strategy.extra_log
                     )
                 else:
@@ -253,14 +261,19 @@ def orders_handler(data: dict) -> None:
         if data.ordType == 'market' and data.algoId:
             if sl_tp_data.stop_loss_order_id == data.algoId:
                 logger.warning(
-                    f'Stop loss market order {data.algoId} is filled',
+                    f'Stop loss market order {data.algoId} is filled, tradeId={data.tradeId}',
                     extra=strategy.extra_log
                 )
+                position.trade_ids.append(data.tradeId)
+                position.save(update_fields=['trade_ids'])
             if sl_tp_data.stop_loss_breakeven_order_id == data.algoId:
                 logger.warning(
-                    f'Stop loss breakeven market order {data.algoId} is filled',
+                    f'Stop loss breakeven market order {data.algoId} is filled, '
+                    f'tradeId={data.tradeId}',
                     extra=strategy.extra_log
                 )
+                position.trade_ids.append(data.tradeId)
+                position.save(update_fields=['trade_ids'])
     except Exception as e:
         logger.exception(e)
         raise e

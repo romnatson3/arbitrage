@@ -617,6 +617,11 @@ class Position(BaseModel):
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='positions', help_text='OKX account', blank=True, null=True)
     trade_ids = models.JSONField('Trade IDs', default=list)
 
+    def save(self, *args, **kwargs):
+        trade_ids = set(self.trade_ids)
+        self.trade_ids = [i for i in trade_ids if i]
+        super().save(*args, **kwargs)
+
     @property
     def side(self) -> str:
         return self.position_data['posSide']
