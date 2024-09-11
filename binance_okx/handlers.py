@@ -372,6 +372,7 @@ def closing_emulate_position_by_limit(
                                     position, last_price, sl_tp_data.tp_first_part,
                                     date_time=date_time
                                 )
+                                return
                             else:
                                 cache.set(key, total_last_size)
                                 logger.info(
@@ -379,41 +380,40 @@ def closing_emulate_position_by_limit(
                                     f'part size {sl_tp_data.tp_first_part}',
                                     extra=strategy.extra_log
                                 )
-                        else:
-                            logger.debug(
-                                f'Last price {last_price} is not equal to '
-                                f'take profit first price {sl_tp_data.tp_first_price}',
+                        logger.debug(
+                            f'Last price {last_price} is not equal to '
+                            f'take profit first price {sl_tp_data.tp_first_price}',
+                            extra=strategy.extra_log
+                        )
+                        if position.side == 'long' and bid_price >= sl_tp_data.tp_first_price:
+                            logger.info(
+                                f'Bid price {bid_price} >= limit order first '
+                                f'take profit price {sl_tp_data.tp_first_price}',
                                 extra=strategy.extra_log
                             )
-                            if position.side == 'long' and bid_price >= sl_tp_data.tp_first_price:
-                                logger.info(
-                                    f'Bid price {bid_price} >= limit order first '
-                                    f'take profit price {sl_tp_data.tp_first_price}',
-                                    extra=strategy.extra_log
-                                )
-                                position.sl_tp_data['first_part_closed'] = True
-                                trade.close_position(
-                                    position, bid_price, sl_tp_data.tp_first_part,
-                                    date_time=date_time
-                                )
-                            elif position.side == 'short' and ask_price <= sl_tp_data.tp_first_price:
-                                logger.info(
-                                    f'Ask price {ask_price} <= limit order first '
-                                    f'take profit price {sl_tp_data.tp_first_price}',
-                                    extra=strategy.extra_log
-                                )
-                                position.sl_tp_data['first_part_closed'] = True
-                                trade.close_position(
-                                    position, ask_price, sl_tp_data.tp_first_part,
-                                    date_time=date_time
-                                )
-                            else:
-                                logger.debug(
-                                    'Limit order first take profit price '
-                                    f'{sl_tp_data.tp_first_price} not reached '
-                                    f'{bid_price=} {ask_price=}',
-                                    extra=strategy.extra_log
-                                )
+                            position.sl_tp_data['first_part_closed'] = True
+                            trade.close_position(
+                                position, bid_price, sl_tp_data.tp_first_part,
+                                date_time=date_time
+                            )
+                        elif position.side == 'short' and ask_price <= sl_tp_data.tp_first_price:
+                            logger.info(
+                                f'Ask price {ask_price} <= limit order first '
+                                f'take profit price {sl_tp_data.tp_first_price}',
+                                extra=strategy.extra_log
+                            )
+                            position.sl_tp_data['first_part_closed'] = True
+                            trade.close_position(
+                                position, ask_price, sl_tp_data.tp_first_part,
+                                date_time=date_time
+                            )
+                        else:
+                            logger.debug(
+                                'Limit order first take profit price '
+                                f'{sl_tp_data.tp_first_price} not reached '
+                                f'{bid_price=} {ask_price=}',
+                                extra=strategy.extra_log
+                            )
                         if position.sl_tp_data['first_part_closed']:
                             if strategy.stop_loss_breakeven:
                                 logger.info(
@@ -444,6 +444,7 @@ def closing_emulate_position_by_limit(
                                 trade.close_position(
                                     position, last_price, position.sz, date_time=date_time
                                 )
+                                return
                             else:
                                 cache.set(key, total_last_size)
                                 logger.info(
@@ -451,38 +452,37 @@ def closing_emulate_position_by_limit(
                                     f'part size {sl_tp_data.tp_second_part}',
                                     extra=strategy.extra_log
                                 )
-                        else:
-                            logger.debug(
-                                f'Last price {last_price} is not equal to take profit '
-                                f'second price {sl_tp_data.tp_second_price}',
+                        logger.debug(
+                            f'Last price {last_price} is not equal to take profit '
+                            f'second price {sl_tp_data.tp_second_price}',
+                            extra=strategy.extra_log
+                        )
+                        if position.side == 'long' and bid_price >= sl_tp_data.tp_second_price:
+                            logger.info(
+                                f'Bid price {bid_price} >= limit order second '
+                                f'take profit price {sl_tp_data.tp_second_price}',
                                 extra=strategy.extra_log
                             )
-                            if position.side == 'long' and bid_price >= sl_tp_data.tp_second_price:
-                                logger.info(
-                                    f'Bid price {bid_price} >= limit order second '
-                                    f'take profit price {sl_tp_data.tp_second_price}',
-                                    extra=strategy.extra_log
-                                )
-                                position.sl_tp_data['second_part_closed'] = True
-                                trade.close_position(
-                                    position, bid_price, position.sz, date_time=date_time
-                                )
-                            elif position.side == 'short' and ask_price <= sl_tp_data.tp_second_price:
-                                logger.info(
-                                    f'Ask price {ask_price} <= limit order second '
-                                    f'take profit price {sl_tp_data.tp_second_price}',
-                                    extra=strategy.extra_log
-                                )
-                                position.sl_tp_data['second_part_closed'] = True
-                                trade.close_position(
-                                    position, ask_price, position.sz, date_time=date_time
-                                )
-                            else:
-                                logger.debug(
-                                    f'Second take profit price {sl_tp_data.tp_second_price} '
-                                    f'not reached {bid_price=} {ask_price=}',
-                                    extra=strategy.extra_log
-                                )
+                            position.sl_tp_data['second_part_closed'] = True
+                            trade.close_position(
+                                position, bid_price, position.sz, date_time=date_time
+                            )
+                        elif position.side == 'short' and ask_price <= sl_tp_data.tp_second_price:
+                            logger.info(
+                                f'Ask price {ask_price} <= limit order second '
+                                f'take profit price {sl_tp_data.tp_second_price}',
+                                extra=strategy.extra_log
+                            )
+                            position.sl_tp_data['second_part_closed'] = True
+                            trade.close_position(
+                                position, ask_price, position.sz, date_time=date_time
+                            )
+                        else:
+                            logger.debug(
+                                f'Second take profit price {sl_tp_data.tp_second_price} '
+                                f'not reached {bid_price=} {ask_price=}',
+                                extra=strategy.extra_log
+                            )
                 elif strategy.take_profit:
                     if last_price == sl_tp_data.take_profit_price:
                         logger.debug(
@@ -503,6 +503,7 @@ def closing_emulate_position_by_limit(
                             trade.close_position(
                                 position, last_price, position.sz, date_time=date_time
                             )
+                            return
                         else:
                             cache.set(key, total_last_size)
                             logger.info(
@@ -510,36 +511,35 @@ def closing_emulate_position_by_limit(
                                 f'{position.sz}',
                                 extra=strategy.extra_log
                             )
-                    else:
-                        logger.debug(
-                            f'Last price {last_price} is not equal to take profit '
-                            f'price {sl_tp_data.take_profit_price}',
+                    logger.debug(
+                        f'Last price {last_price} is not equal to take profit '
+                        f'price {sl_tp_data.take_profit_price}',
+                        extra=strategy.extra_log
+                    )
+                    if position.side == 'long' and bid_price >= sl_tp_data.take_profit_price:
+                        logger.info(
+                            f'Bid price {bid_price} >= take profit price '
+                            f'{sl_tp_data.take_profit_price}',
                             extra=strategy.extra_log
                         )
-                        if position.side == 'long' and bid_price >= sl_tp_data.take_profit_price:
-                            logger.info(
-                                f'Bid price {bid_price} >= take profit price '
-                                f'{sl_tp_data.take_profit_price}',
-                                extra=strategy.extra_log
-                            )
-                            trade.close_position(
-                                position, bid_price, position.sz, date_time=date_time
-                            )
-                        elif position.side == 'short' and ask_price <= sl_tp_data.take_profit_price:
-                            logger.info(
-                                f'Ask price {ask_price} <= take profit price '
-                                f'{sl_tp_data.take_profit_price}',
-                                extra=strategy.extra_log
-                            )
-                            trade.close_position(
-                                position, ask_price, position.sz, date_time=date_time
-                            )
-                        else:
-                            logger.debug(
-                                f'Take profit price {sl_tp_data.take_profit_price} '
-                                f'not reached {bid_price=} {ask_price=}',
-                                extra=strategy.extra_log
-                            )
+                        trade.close_position(
+                            position, bid_price, position.sz, date_time=date_time
+                        )
+                    elif position.side == 'short' and ask_price <= sl_tp_data.take_profit_price:
+                        logger.info(
+                            f'Ask price {ask_price} <= take profit price '
+                            f'{sl_tp_data.take_profit_price}',
+                            extra=strategy.extra_log
+                        )
+                        trade.close_position(
+                            position, ask_price, position.sz, date_time=date_time
+                        )
+                    else:
+                        logger.debug(
+                            f'Take profit price {sl_tp_data.take_profit_price} '
+                            f'not reached {bid_price=} {ask_price=}',
+                            extra=strategy.extra_log
+                        )
     except AcquireLockException:
         logger.debug(
             'Task closing_emulate_position_by_limit is currently running',
