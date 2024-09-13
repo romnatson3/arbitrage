@@ -440,7 +440,7 @@ class OkxEmulateTrade():
             position.is_open = False
             logger.warning(
                 'Virtual position is closed completely '
-                f'{close_price=} {size_contract=}, {size_usdt=}',
+                f'{close_price=} {size_contract=}, {size_usdt=} at {date_time}',
                 extra=self.strategy.extra_log
             )
         else:
@@ -452,7 +452,7 @@ class OkxEmulateTrade():
             )
             logger.warning(
                 'Virtual position is closed partially '
-                f'{close_price=} {size_contract=}, {size_usdt=}',
+                f'{close_price=} {size_contract=}, {size_usdt=} at {date_time}',
                 extra=self.strategy.extra_log
             )
         position.save(update_fields=['is_open', 'sl_tp_data', 'position_data'])
