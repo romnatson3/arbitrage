@@ -88,13 +88,22 @@ app.conf.update(
 class TaskFormatter(CeleryTaskFormatter):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        green = '\033[32m'
+        trace_gray = '\033[90m'
+        debug_cyan = '\033[36m'
+        info_green = '\033[32m'
+        warning_yellow = '\033[33m'
+        critical_purple = '\033[35m'
+        error_red = '\033[31m'
         reset = '\033[0m'
-        gray = '\033[90m'
-        self.success_fmt = green + self._fmt + reset
-        self.trace_fmt = gray + self._fmt + reset
+        self.trace_fmt = trace_gray + self._fmt + reset
+        self.debug_fmt = debug_cyan + self._fmt + reset
+        self.info_fmt = info_green + self._fmt + reset
+        self.warning_fmt = warning_yellow + self._fmt + reset
+        self.critical_fmt = critical_purple + self._fmt + reset
+        self.error_fmt = error_red + self._fmt + reset
 
     def format(self, record):
+        formatter = CeleryTaskFormatter(self._fmt)
         task = get_current_task()
         if task and task.request:
             short_task_id = task.request.id.split('-')[0]
@@ -105,15 +114,21 @@ class TaskFormatter(CeleryTaskFormatter):
         record.__dict__.setdefault('strategy', '')
         record.__dict__.setdefault('symbol', '')
         record.__dict__.setdefault('position', '')
-        if record.levelno == logging.INFO and re.search(r'success', record.msg.lower()):
-            formatter = CeleryTaskFormatter(self.success_fmt)
-            return formatter.format(record)
         if record.levelno == settings.TRACE_LEVEL_NUM:
             record.levelname = 'TRACE'
             formatter = CeleryTaskFormatter(self.trace_fmt)
-            formatter.datefmt = '%d-%m-%Y %H:%M:%S'
-            return formatter.format(record)
-        return super().format(record)
+        if record.levelno == logging.DEBUG:
+            formatter = CeleryTaskFormatter(self.debug_fmt)
+        if record.levelno == logging.INFO:
+            formatter = CeleryTaskFormatter(self.info_fmt)
+        if record.levelno == logging.WARNING:
+            formatter = CeleryTaskFormatter(self.warning_fmt)
+        if record.levelno == logging.CRITICAL:
+            formatter = CeleryTaskFormatter(self.critical_fmt)
+        if record.levelno == logging.ERROR:
+            formatter = CeleryTaskFormatter(self.error_fmt)
+        formatter.datefmt = '%d-%m-%Y %H:%M:%S'
+        return formatter.format(record)
 
 
 @after_setup_logger.connect
@@ -124,9 +139,5 @@ def setup_task_logger(logger, *args, **kwargs):
             '[%(asctime)s.%(msecs)03d] %(short_task_id)s %(levelname)-7s '
             '[%(created_by)s] [%(strategy)s] [%(symbol)s] [%(position)s] %(message)s',
         )
-        # tf = TaskFormatter(
-        #     '[%(asctime)s.%(msecs)03d] %(short_task_id)s %(levelname)-7s %(name)-17s '
-        #     '[%(created_by)s] [%(strategy)s] [%(symbol)s] [%(position)s] %(message)s',
-        # )
-        tf.datefmt = '%d-%m-%Y %H:%M:%S'
+        # tf.datefmt = '%d-%m-%Y %H:%M:%S'
         handler.setFormatter(tf)

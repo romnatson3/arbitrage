@@ -112,32 +112,6 @@ def save_okx_ask_bid_to_cache(data: dict) -> None:
     pipeline.execute()
 
 
-# def save_okx_last_price_and_size_to_cache(data: dict) -> None:
-#     symbol = ''.join(data['instId'].split('-')[:2])
-#     key = f'okx_last_price_{symbol}'
-#     timestamp = int(data['ts'])
-#     date_time = datetime.fromtimestamp(timestamp / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
-#     last_price = float(data['last'])
-#     last_size = float(data['lastSz'])
-#     last_record = connection.zrange(key, -1, -1)
-#     if last_record:
-#         last_record = json.loads(last_record[0])
-#         if last_record['last_size'] == last_size and last_record['last_price'] == last_price:
-#             return
-#     data = json.dumps(dict(
-#         symbol=symbol,
-#         last_price=last_price,
-#         last_size=last_size,
-#         timestamp=timestamp,
-#         date_time=date_time
-#     ))
-#     one_minute_ago = timestamp - 60000
-#     pipeline = connection.pipeline()
-#     pipeline.execute_command('zadd', key, timestamp, data)
-#     pipeline.execute_command('zremrangebyscore', key, 0, one_minute_ago)
-#     pipeline.execute()
-
-
 @app.task
 def orders_handler(data: dict) -> None:
     try:
@@ -369,8 +343,8 @@ def closing_emulate_position_by_limit(
                                 )
                                 position.sl_tp_data['first_part_closed'] = True
                                 trade.close_position(
-                                    position, last_price, sl_tp_data.tp_first_part,
-                                    date_time=date_time
+                                    position, sl_tp_data.tp_first_price,
+                                    sl_tp_data.tp_first_part, date_time=date_time
                                 )
                                 return
                             else:
@@ -393,8 +367,8 @@ def closing_emulate_position_by_limit(
                             )
                             position.sl_tp_data['first_part_closed'] = True
                             trade.close_position(
-                                position, bid_price, sl_tp_data.tp_first_part,
-                                date_time=date_time
+                                position, sl_tp_data.tp_first_price,
+                                sl_tp_data.tp_first_part, date_time=date_time
                             )
                         elif position.side == 'short' and ask_price <= sl_tp_data.tp_first_price:
                             logger.info(
@@ -404,8 +378,8 @@ def closing_emulate_position_by_limit(
                             )
                             position.sl_tp_data['first_part_closed'] = True
                             trade.close_position(
-                                position, ask_price, sl_tp_data.tp_first_part,
-                                date_time=date_time
+                                position, sl_tp_data.tp_first_price,
+                                sl_tp_data.tp_first_part, date_time=date_time
                             )
                         else:
                             logger.debug(
@@ -442,7 +416,8 @@ def closing_emulate_position_by_limit(
                                 )
                                 position.sl_tp_data['second_part_closed'] = True
                                 trade.close_position(
-                                    position, last_price, position.sz, date_time=date_time
+                                    position, sl_tp_data.tp_second_price,
+                                    position.sz, date_time=date_time
                                 )
                                 return
                             else:
@@ -465,7 +440,8 @@ def closing_emulate_position_by_limit(
                             )
                             position.sl_tp_data['second_part_closed'] = True
                             trade.close_position(
-                                position, bid_price, position.sz, date_time=date_time
+                                position, sl_tp_data.tp_second_price,
+                                position.sz, date_time=date_time
                             )
                         elif position.side == 'short' and ask_price <= sl_tp_data.tp_second_price:
                             logger.info(
@@ -475,7 +451,8 @@ def closing_emulate_position_by_limit(
                             )
                             position.sl_tp_data['second_part_closed'] = True
                             trade.close_position(
-                                position, ask_price, position.sz, date_time=date_time
+                                position, sl_tp_data.tp_second_price,
+                                position.sz, date_time=date_time
                             )
                         else:
                             logger.debug(
@@ -501,7 +478,8 @@ def closing_emulate_position_by_limit(
                                 extra=strategy.extra_log
                             )
                             trade.close_position(
-                                position, last_price, position.sz, date_time=date_time
+                                position, sl_tp_data.take_profit_price,
+                                position.sz, date_time=date_time
                             )
                             return
                         else:
@@ -523,7 +501,8 @@ def closing_emulate_position_by_limit(
                             extra=strategy.extra_log
                         )
                         trade.close_position(
-                            position, bid_price, position.sz, date_time=date_time
+                            position, sl_tp_data.take_profit_price,
+                            position.sz, date_time=date_time
                         )
                     elif position.side == 'short' and ask_price <= sl_tp_data.take_profit_price:
                         logger.info(
@@ -532,7 +511,8 @@ def closing_emulate_position_by_limit(
                             extra=strategy.extra_log
                         )
                         trade.close_position(
-                            position, ask_price, position.sz, date_time=date_time
+                            position, sl_tp_data.take_profit_price,
+                            position.sz, date_time=date_time
                         )
                     else:
                         logger.debug(

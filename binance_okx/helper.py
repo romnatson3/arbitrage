@@ -85,7 +85,6 @@ class Calculator():
             take_profit_price = price * (1 + (percentage + fee_percent + spread_percent) / 100)
         if position_side == 'short':
             take_profit_price = price * (1 - (percentage + fee_percent + spread_percent) / 100)
-        # return round(take_profit_price, 4)
         take_profit_price = float(
             Decimal(take_profit_price)
             .quantize(Decimal(str(symbol.tick_size)), rounding=ROUND_DOWN)

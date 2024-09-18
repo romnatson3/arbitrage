@@ -18,7 +18,7 @@ from .forms import CustomUserCreationForm, CustomUserChangeForm
 from .models import (
     StatusLog, Account, OkxSymbol, BinanceSymbol, Strategy, Symbol, Position, Execution, Bill
 )
-from .misc import get_pretty_dict, get_pretty_text, sort_data
+from .misc import get_pretty_dict, get_pretty_text, sort_data, fetch_trade_executions
 from .helper import calc
 from .forms import StrategyForm
 from .filters import (
@@ -213,7 +213,7 @@ class OkxSymbolAdmin(admin.ModelAdmin):
 @admin.register(Strategy)
 class StrategyAdmin(admin.ModelAdmin):
     class Media:
-        js = ('binance_okx/strategy.js',)
+        js = ('binance_okx/js/strategy.js',)
 
     list_display = (
         'id', 'name', 'enabled', 'mode', '_account', 'position_size',
@@ -328,6 +328,100 @@ class StrategyAdmin(admin.ModelAdmin):
         return render(request, 'admin/csv_list.html', context)
 
 
+class ExecutionAdminMixin():
+    @admin.display(description='Data')
+    def _data(self, obj) -> str:
+        data: dict = sort_data(obj.data, Execution.get_empty_data())
+        return get_pretty_text(data)
+
+    @admin.display(description='Type', ordering='_type')
+    def _type(self, obj) -> str:
+        return obj.data.get('subType', '')
+
+    @admin.display(description='Contract size')
+    def _contract(self, obj) -> str:
+        return obj.data.get('sz', '')
+
+    @admin.display(description='USDT amount')
+    def _amount(self, obj) -> str:
+        base_coin = calc.get_base_coin_from_sz(
+            obj.data['sz'], obj.position.symbol.okx.ct_val
+        )
+        usdt = base_coin * obj.data['px']
+        return round(usdt, 2)
+
+    @admin.display(description='Px')
+    def _px(self, obj) -> str:
+        return obj.data.get('px', '')
+
+    @admin.display(description='PnL')
+    def _pnl(self, obj) -> str:
+        return obj.data.get('pnl', '')
+
+    @admin.display(description='Symbol')
+    def _symbol(self, obj) -> str:
+        inst_id = obj.data.get('instId', '')
+        if inst_id:
+            symbol = ''.join(inst_id.split('-')[:-1])
+        else:
+            symbol = ''
+        return symbol
+
+
+@admin.register(Execution)
+class ExecutionAdmin(ExecutionAdminMixin, admin.ModelAdmin):
+    list_display = (
+        'position', '_type', '_symbol', '_contract', '_amount', '_px', '_pnl',
+        'bill_id', 'trade_id', 'created_at'
+    )
+    fields = (
+        'id', 'position', 'bill_id', 'trade_id', '_data', 'updated_at', 'created_at'
+    )
+    list_display_links = ('position',)
+    search_fields = ('position__id',)
+    list_filter = (
+        'position__strategy', 'position__mode', 'position__is_open', 'position__id'
+    )
+    ordering = ('-position', '-bill_id')
+
+    def get_queryset(self, request) -> QuerySet:
+        qs = super().get_queryset(request)
+        if request.user.is_superuser:
+            return qs
+        return qs.filter(position__strategy__created_by=request.user)
+
+    # def has_delete_permission(self, request, obj=None):
+    #     return False
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
+class ExecutionInline(ExecutionAdminMixin, admin.TabularInline):
+    model = Execution
+    fields = (
+        '_type', '_symbol', '_contract', '_amount', '_px', '_pnl',
+        'bill_id', 'trade_id', 'created_at'
+    )
+    readonly_fields = (
+        '_type', '_symbol', '_contract', '_amount', '_px', '_pnl',
+        'bill_id', 'trade_id', 'created_at'
+    )
+    extra = 0
+
+    def has_delete_permission(self, request, obj=None):
+        return False
+
+    def has_add_permission(self, request, obj=None):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+
 @admin.register(Position)
 class PositionAdmin(admin.ModelAdmin):
     list_display = (
@@ -346,6 +440,12 @@ class PositionAdmin(admin.ModelAdmin):
     )
     list_filter = ('is_open', 'mode', PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter)
     actions = ['export_csv_action', 'toggle_open_close', 'manual_fill_execution']
+    inlines = [ExecutionInline]
+
+    class Media:
+        css = {
+            'all': ('binance_okx/css/inline.css',)
+        }
 
     def get_queryset(self, request) -> QuerySet:
         qs = super().get_queryset(request)
@@ -430,34 +530,17 @@ class PositionAdmin(admin.ModelAdmin):
 
     @admin.action(description='Pull execution data manually')
     def manual_fill_execution(self, request, queryset):
-        for position in queryset:
-            position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
-            order_ids = Bill.objects.filter(data__tradeId__in=position.trade_ids).values_list('data__ordId', flat=True)
-            bills = Bill.objects.filter(data__ordId__in=order_ids).all()
-            executions = []
-            for bill in bills:
-                executions.append(
-                    Execution(
-                        bill_id=bill.bill_id, trade_id=bill.data['tradeId'],
-                        data=bill.data, position=position
-                    )
-                )
-            logger.info(
-                f'Found {len(bills)} execution for position {position.id}',
-                extra=position.strategy._extra_log
+        count = fetch_trade_executions(queryset)
+        if count > 0:
+            self.message_user(
+                request,
+                f'Updated {count} positions',
+                level='SUCCESS'
             )
-            if bills:
-                executions = Execution.objects.bulk_create(executions, ignore_conflicts=True)
-                self.message_user(
-                    request,
-                    f'Found {len(executions)} executions for position {position.id}',
-                    level='WARNING'
-                )
-            else:
-                self.message_user(request, f'No executions found for position {position.id}', level='ERROR')
 
     @admin.action(description='Export CSV')
     def export_csv_action(self, request, queryset):
+        fetch_trade_executions(queryset)
         f = StringIO()
         writer = csv.writer(f, delimiter=';')
         headers = [
@@ -593,76 +676,6 @@ class PositionAdmin(admin.ModelAdmin):
         response = HttpResponse(f.read(), content_type='text/csv', charset='utf-8-sig')
         response['Content-Disposition'] = 'attachment; filename="positions.csv"'
         return response
-
-
-@admin.register(Execution)
-class ExecutionAdmin(admin.ModelAdmin):
-    list_display = (
-        'position', '_type', '_symbol', '_contract', '_amount', '_px', '_pnl',
-        'bill_id', 'trade_id', 'created_at'
-    )
-    fields = (
-        'id', 'position', 'bill_id', 'trade_id', '_data', 'updated_at', 'created_at'
-    )
-    list_display_links = ('position',)
-    search_fields = ('position__id',)
-    list_filter = (
-        'position__strategy', 'position__mode', 'position__is_open', 'position__id'
-    )
-    ordering = ('-position', '-bill_id')
-
-    def get_queryset(self, request) -> QuerySet:
-        qs = super().get_queryset(request)
-        if request.user.is_superuser:
-            return qs
-        return qs.filter(position__strategy__created_by=request.user)
-
-    # def has_delete_permission(self, request, obj=None):
-    #     return False
-
-    def has_add_permission(self, request):
-        return False
-
-    def has_change_permission(self, request, obj=None):
-        return False
-
-    @admin.display(description='Data')
-    def _data(self, obj) -> str:
-        data: dict = sort_data(obj.data, Execution.get_empty_data())
-        return get_pretty_text(data)
-
-    @admin.display(description='Type', ordering='_type')
-    def _type(self, obj) -> str:
-        return obj.data.get('subType', '')
-
-    @admin.display(description='Contract size')
-    def _contract(self, obj) -> str:
-        return obj.data.get('sz', '')
-
-    @admin.display(description='USDT amount')
-    def _amount(self, obj) -> str:
-        base_coin = calc.get_base_coin_from_sz(
-            obj.data['sz'], obj.position.symbol.okx.ct_val
-        )
-        usdt = base_coin * obj.data['px']
-        return round(usdt, 2)
-
-    @admin.display(description='Px')
-    def _px(self, obj) -> str:
-        return obj.data.get('px', '')
-
-    @admin.display(description='PnL')
-    def _pnl(self, obj) -> str:
-        return obj.data.get('pnl', '')
-
-    @admin.display(description='Symbol')
-    def _symbol(self, obj) -> str:
-        inst_id = obj.data.get('instId', '')
-        if inst_id:
-            symbol = ''.join(inst_id.split('-')[:-1])
-        else:
-            symbol = ''
-        return symbol
 
 
 @admin.register(Bill)
