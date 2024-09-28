@@ -215,7 +215,7 @@ def create_or_update_position(data: dict) -> None:
                     f'side={data["posSide"]}, trade_id={data["tradeId"]}',
                     extra=strategy.extra_log
                 )
-                if position.sl_tp_data['increased_position']:
+                if position.increased:
                     if previous_pos < data['pos']:
                         calc_tp_and_place_orders_after_increase_trade_position(position)
         else:
@@ -335,66 +335,63 @@ def check_position_close_time(strategy_id: int, symbol: str) -> None:
 
 
 @app.task
-def open_or_increase_position(strategy_id: int, symbol: str, position_side: str, prices: dict) -> None:
+def open_or_increase_position(
+    strategy_id: int, symbol: str, position_side: str, prices: dict
+) -> None:
     symbol = Symbol.objects.cache(symbol=symbol)[0]
     strategy = Strategy.objects.cache(id=strategy_id, enabled=True)[0]
     strategy._extra_log.update(symbol=symbol)
     try:
-        lock = TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}')
-        if lock.acquire():
-            cache.set(f'okx_ask_bid_prices_{symbol}', prices)
-            logger.trace(f'Caching okx_ask_bid_prices_{symbol} {prices}', extra=strategy.extra_log)
-            position = Position.objects.filter(strategy=strategy, symbol=symbol, is_open=True).last()
-            strategy._extra_log.update(symbol=symbol, position=position.id if position else None)
-            if strategy.mode == Strategy.Mode.trade:
-                if position:
-                    if position.side == position_side:
+        cache.set(f'okx_ask_bid_prices_{symbol}', prices)
+        logger.trace(
+            f'Caching okx_ask_bid_prices_{symbol} {prices}',
+            extra=strategy.extra_log
+        )
+        position = Position.objects.filter(
+            strategy=strategy, symbol=symbol, is_open=True).last()
+        strategy._extra_log.update(
+            symbol=symbol, position=position.id if position else None)
+        if strategy.mode == Strategy.Mode.trade:
+            if position:
+                if position.side == position_side:
+                    if position.stop_loss_breakeven_set and not position.increased:
                         increase_trade_position(strategy, position, prices)
-                    else:
-                        logger.debug(
-                            'Trying to open position with different side '
-                            f'current side={position.side}, new side={position_side}',
-                            extra=strategy.extra_log
-                        )
-                        lock.release()
-                else:
-                    open_trade_position(strategy, symbol, position_side, prices)
-            elif strategy.mode == Strategy.Mode.emulate:
-                if not position:
-                    open_emulate_position(strategy, symbol, position_side, prices)
-                else:
-                    logger.debug(
-                        'Current position is still open. Skip open new position',
-                        extra=strategy.extra_log
-                    )
-                lock.release()
-        else:
-            logger.trace(
-                'Task open_or_increase_position is currently running',
-                extra=strategy.extra_log
-            )
+            else:
+                open_trade_position(strategy, symbol, position_side, prices)
+        elif strategy.mode == Strategy.Mode.emulate:
+            if not position:
+                open_emulate_position(strategy, symbol, position_side, prices)
     except Exception as e:
         logger.exception(e, extra=strategy.extra_log)
+        TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}').release()
+        logger.warning('TaskLock released', extra=strategy.extra_log)
         raise e
 
 
 @app.task
 def check_condition(data: dict) -> None:
-    try:
-        symbol = Symbol.objects.cache(symbol=data['s'])[0]
-        strategies = Strategy.objects.cache(enabled=True, symbols=symbol)
-        for strategy in strategies:
+    symbol = Symbol.objects.cache(symbol=data['s'])[0]
+    strategies = Strategy.objects.cache(enabled=True, symbols=symbol)
+    for strategy in strategies:
+        try:
+            lock = TaskLock(
+                f'open_or_increase_position_{strategy.id}_{symbol}',
+                timeout=None
+            )
+            if lock.is_locked():
+                continue
             strategy._extra_log.update(symbol=symbol)
             condition_met, position_side, prices = (
                 check_all_conditions(strategy, symbol, int(data['E']))
             )
             if condition_met:
-                open_or_increase_position.delay(
-                    strategy.id, symbol.symbol, position_side, prices
-                )
-    except Exception as e:
-        logger.exception(e)
-        raise e
+                if lock.acquire():
+                    logger.warning('Condition met, TaskLock acquired', extra=strategy.extra_log)
+                    open_or_increase_position.delay(
+                        strategy.id, symbol.symbol, position_side, prices
+                    )
+        except Exception as e:
+            logger.exception(e, extra=strategy.extra_log)
 
 
 @app.task

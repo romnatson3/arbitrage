@@ -118,7 +118,7 @@ def get_pre_enter_data(strategy: Strategy, symbol: Symbol, position_side: str, p
     elif position_side == 'short':
         sz = prices['okx_last_bid_size']
         price = prices['okx_last_bid']
-    logger.warning(f'Get pre-enter data {sz=} {price=}', extra=strategy.extra_log)
+    logger.info(f'Get pre-enter data {sz=} {price=}', extra=strategy.extra_log)
     sz_from_admin = calc.get_sz(symbol.okx, strategy.position_size, price)
     if sz < sz_from_admin:
         size_contract = sz
@@ -137,18 +137,24 @@ def get_pre_enter_data(strategy: Strategy, symbol: Symbol, position_side: str, p
     return price, size_contract, size_usdt
 
 
-def open_emulate_position(strategy: Strategy, symbol: Symbol, position_side: str, prices: dict) -> None:
+def open_emulate_position(
+    strategy: Strategy, symbol: Symbol, position_side: str, prices: dict
+) -> None:
     if funding_time_too_close(strategy, symbol, position_side):
         return
     trade = OkxEmulateTrade(strategy, symbol)
-    open_price, size_contract, size_usdt = get_pre_enter_data(strategy, symbol, position_side, prices)
+    open_price, size_contract, size_usdt = get_pre_enter_data(
+        strategy, symbol, position_side, prices
+    )
     position = trade.create_position(
         open_price, size_contract, size_usdt, position_side, prices['date_time_last_prices']
     )
     fill_position_data(strategy, position, prices, prices)
 
 
-def open_trade_position(strategy: Strategy, symbol: Symbol, position_side: str, prices: dict) -> None:
+def open_trade_position(
+    strategy: Strategy, symbol: Symbol, position_side: str, prices: dict
+) -> None:
     if funding_time_too_close(strategy, symbol, position_side):
         TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}').release()
         return
@@ -158,15 +164,13 @@ def open_trade_position(strategy: Strategy, symbol: Symbol, position_side: str, 
 
 
 def increase_trade_position(strategy: Strategy, position: Position, prices: dict) -> None:
-    if not position.sl_tp_data['increased_position'] and position.sl_tp_data['stop_loss_breakeven_order_id']:
-        _, size_contract, size_usdt = get_pre_enter_data(strategy, position.symbol, position.side, prices)
-        position.sl_tp_data['increased_position'] = True
-        position.save(update_fields=['sl_tp_data'])
-        trade = OkxTrade(strategy, position.symbol, size_contract, position.side)
-        trade.open_position(increase=True)
-    else:
-        logger.debug('Not all conditions are met to increase the position', extra=strategy.extra_log)
-        TaskLock(f'open_or_increase_position_{strategy.id}_{position.symbol}').release()
+    _, size_contract, size_usdt = get_pre_enter_data(
+        strategy, position.symbol, position.side, prices
+    )
+    position.sl_tp_data['increased_position'] = True
+    position.save(update_fields=['sl_tp_data'])
+    trade = OkxTrade(strategy, position.symbol, size_contract, position.side)
+    trade.open_position(increase=True)
 
 
 def place_orders_after_open_trade_position(position: Position) -> None:
@@ -209,8 +213,6 @@ def place_orders_after_open_trade_position(position: Position) -> None:
     except PlaceOrderException as e:
         logger.error(e, extra=strategy.extra_log)
         trade.close_entire_position()
-    finally:
-        TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}').release()
 
 
 def calc_tp_and_place_orders_after_increase_trade_position(position: Position) -> None:
@@ -256,5 +258,3 @@ def calc_tp_and_place_orders_after_increase_trade_position(position: Position) -
     except PlaceOrderException as e:
         logger.error(e, extra=strategy.extra_log)
         trade.close_entire_position()
-    finally:
-        TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}').release()

@@ -347,8 +347,12 @@ class OkxTrade():
         order_id = result['data'][0]['algoId']
         return order_id
 
-    def update_take_profit(self, price: float, symbol: OkxSymbol = None, position_side: str = None) -> None:
-        price = price_to_string(price)
+    def update_take_profit(
+        self,
+        price: float,
+        symbol: OkxSymbol = None,
+        position_side: str = None
+    ) -> None:
         if not symbol:
             symbol = self.symbol_okx
         if not position_side:
@@ -357,6 +361,7 @@ class OkxTrade():
         if not algo_id:
             algo_id = self.place_take_profit(price, symbol, position_side)
             return
+        price = price_to_string(price)
         result = self.trade.amend_algo_order(
             instId=symbol.inst_id,
             algoId=algo_id,

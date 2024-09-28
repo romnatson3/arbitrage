@@ -52,6 +52,7 @@ def write_ask_bid_to_csv_and_cache_by_symbol(data: dict) -> None:
         okx_bid_price_str = str(okx_bid_price).replace('.', ',')
         okx_bid_size_str = str(okx_bid_size).replace('.', ',')
     else:
+        logger.error('Not found okx ask bid data in cache', extra=dict(symbol=symbol))
         okx_ask_price = 0
         okx_ask_size = 0
         okx_bid_price = 0

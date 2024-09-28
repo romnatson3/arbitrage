@@ -27,6 +27,8 @@ def round_by_lot_sz(value: float, lot_sz: str) -> float:
 
 
 def price_to_string(price: float) -> str:
+    if type(price) is str:
+        return price.rstrip('0').rstrip('.')
     return f'{price:.10f}'.rstrip('0').rstrip('.')
 
 
@@ -96,14 +98,18 @@ calc = Calculator()
 
 
 class TaskLock():
-    def __init__(self, key) -> None:
+    def __init__(self, key: str, timeout: int = 15) -> None:
         self.key = key
+        self.timeout = timeout
 
     def acquire(self) -> bool:
-        return cache.add(self.key, 1, timeout=15)
+        return cache.add(self.key, 1, timeout=self.timeout)
 
     def release(self) -> None:
         cache.delete(self.key)
+
+    def is_locked(self) -> bool:
+        return True if cache.get(self.key) else False
 
     def __enter__(self):
         if not self.acquire():
@@ -143,6 +149,12 @@ def check_all_conditions(strategy: Strategy, symbol: Symbol, max_score: int) -> 
         okx_last_bid=okx_last_bid, okx_last_bid_size=okx_last_bid_size,
         date_time_last_prices=date_time_last_prices
     )
+    if not all(i for i in prices.values()):
+        logger.warning(
+            f'Not all values are present in the last cache entry: {prices=}',
+            extra=strategy.extra_log
+        )
+        return nothing
     logger.trace(
         'Last record in cache: '
         f'{date_time_last_prices=}, {binance_last_ask=}, {binance_last_bid=}, '

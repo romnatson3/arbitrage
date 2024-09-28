@@ -617,6 +617,23 @@ class Position(BaseModel):
     account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='positions', help_text='OKX account', blank=True, null=True)
     trade_ids = models.JSONField('Trade IDs', default=list)
 
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self._is_open = self.is_open
+        self._stop_loss_breakeven_set = self.stop_loss_breakeven_set
+        self._increased = self.increased
+
+    @property
+    def stop_loss_breakeven_set(self) -> bool:
+        if self.sl_tp_data['stop_loss_breakeven_order_id']:
+            return True
+        else:
+            return False
+
+    @property
+    def increased(self) -> bool:
+        return self.sl_tp_data['increased_position']
+
     def save(self, *args, **kwargs):
         trade_ids = set(self.trade_ids)
         self.trade_ids = [i for i in trade_ids if i]
