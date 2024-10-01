@@ -25,7 +25,10 @@ def funding_time_too_close(strategy: Strategy, symbol: Symbol, position_side: st
             return True
         else:
             funding_rate = symbol.okx.funding_rate
-            if (funding_rate > 0 and position_side == 'long') or (funding_rate < 0 and position_side == 'short'):
+            if (
+                (funding_rate > 0 and position_side == 'long') or
+                (funding_rate < 0 and position_side == 'short')
+            ):
                 logger.warning(
                     f'Funding rate {funding_rate:.5f} is unfavorable for '
                     f'the current position. Position will not open',
@@ -50,7 +53,8 @@ def time_close_position(strategy: Strategy, position: Position) -> bool:
         seconds_to_close = (close_time - timezone.localtime()).total_seconds()
         if seconds_to_close > 0:
             logger.debug(
-                f'Time to close {round(seconds_to_close//60)} minutes {round(seconds_to_close%60)} seconds',
+                f'Time to close {round(seconds_to_close//60)} minutes '
+                f'{round(seconds_to_close%60)} seconds',
                 extra=strategy.extra_log
             )
             return False
@@ -59,7 +63,12 @@ def time_close_position(strategy: Strategy, position: Position) -> bool:
             return True
 
 
-def fill_position_data(strategy: Strategy, position: Position, prices: dict, prices_entry: dict) -> Position:
+def fill_position_data(
+    strategy: Strategy,
+    position: Position,
+    prices: dict,
+    prices_entry: dict
+) -> Position:
     symbol = position.symbol.okx
     position.ask_bid_data.update(
         binance_previous_ask=prices['binance_previous_ask'],
@@ -111,7 +120,12 @@ def fill_position_data(strategy: Strategy, position: Position, prices: dict, pri
     return position
 
 
-def get_pre_enter_data(strategy: Strategy, symbol: Symbol, position_side: str, prices: dict) -> tuple:
+def get_pre_enter_data(
+    strategy: Strategy,
+    symbol: Symbol,
+    position_side: str,
+    prices: dict
+) -> tuple:
     if position_side == 'long':
         sz = prices['okx_last_ask_size']
         price = prices['okx_last_ask']
@@ -147,7 +161,8 @@ def open_emulate_position(
         strategy, symbol, position_side, prices
     )
     position = trade.create_position(
-        open_price, size_contract, size_usdt, position_side, prices['date_time_last_prices']
+        open_price, size_contract, size_usdt, position_side,
+        prices['date_time_last_prices']
     )
     fill_position_data(strategy, position, prices, prices)
 
@@ -175,8 +190,13 @@ def increase_trade_position(strategy: Strategy, position: Position, prices: dict
 
 def place_orders_after_open_trade_position(position: Position) -> None:
     try:
-        position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
-        logger.info('Placing orders after opening position', extra=position.strategy.extra_log)
+        position.strategy._extra_log.update(
+            symbol=position.symbol.symbol, position=position.id
+        )
+        logger.info(
+            'Placing orders after opening position',
+            extra=position.strategy.extra_log
+        )
         strategy = position.strategy
         symbol = position.symbol
         prices = cache.get(f'okx_ask_bid_prices_{symbol}')
@@ -189,21 +209,31 @@ def place_orders_after_open_trade_position(position: Position) -> None:
         sl_tp_data = Namespace(**position.sl_tp_data)
         trade = OkxTrade(strategy, symbol, position.sz, position.side)
         if strategy.stop_loss:
-            order_id = trade.place_stop_loss(price=sl_tp_data.stop_loss_price, sz=position.sz)
+            order_id = trade.place_stop_loss(
+                price=sl_tp_data.stop_loss_price, sz=position.sz
+            )
             position.sl_tp_data['stop_loss_order_id'] = int(order_id)
             position.save(update_fields=['sl_tp_data'])
         if strategy.close_position_parts:
             if strategy.close_position_type == 'limit':
-                order_id = trade.place_limit_order(sl_tp_data.tp_first_price, sl_tp_data.tp_first_part)
+                order_id = trade.place_limit_order(
+                    sl_tp_data.tp_first_price, sl_tp_data.tp_first_part
+                )
                 position.sl_tp_data['tp_first_limit_order_id'] = int(order_id)
                 position.save(update_fields=['sl_tp_data'])
-                logger.debug(f'Save limit {order_id=} for first part', extra=strategy.extra_log)
+                logger.debug(
+                    f'Save limit {order_id=} for first part',
+                    extra=strategy.extra_log
+                )
                 order_id = trade.place_limit_order(
                     sl_tp_data.tp_second_price, sl_tp_data.tp_second_part
                 )
                 position.sl_tp_data['tp_second_limit_order_id'] = int(order_id)
                 position.save(update_fields=['sl_tp_data'])
-                logger.debug(f'Save limit {order_id=} for second part', extra=strategy.extra_log)
+                logger.debug(
+                    f'Save limit {order_id=} for second part',
+                    extra=strategy.extra_log
+                )
         else:
             if strategy.take_profit:
                 if strategy.close_position_type == 'market':

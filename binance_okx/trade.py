@@ -133,7 +133,10 @@ class OkxTrade():
         if result['code'] != '0':
             raise ClosePositionException(f'Failed to close {position_side} position. {result}')
         else:
-            logger.warning(f'Closed entire {position_side} position', extra=self.strategy.extra_log)
+            logger.warning(
+                f'Closed entire {position_side} position',
+                extra=self.strategy.extra_log
+            )
 
     def place_stop_loss(
         self,
@@ -179,7 +182,12 @@ class OkxTrade():
         )
         return order_id
 
-    def place_take_profit(self, price: float, symbol: OkxSymbol = None, position_side: str = None) -> str:
+    def place_take_profit(
+        self,
+        price: float,
+        symbol: OkxSymbol = None,
+        position_side: str = None
+    ) -> str:
         price = price_to_string(price)
         if not symbol:
             symbol = self.symbol_okx
@@ -205,7 +213,10 @@ class OkxTrade():
                 f'Failed to place take profit. {result}. {price=}, {symbol.market_price=}'
             )
         order_id = result['data'][0]['algoId']
-        logger.info(f'Placed take profit {price=} {order_id=}', extra=self.strategy.extra_log)
+        logger.info(
+            f'Placed take profit {price=} {order_id=}',
+            extra=self.strategy.extra_log
+        )
         return order_id
 
     def place_stop_loss_and_take_profit(
@@ -283,7 +294,10 @@ class OkxTrade():
         for order in result['data']:
             orders.append(convert_dict_values(order))
         orders_ids = [order['ordId'] for order in orders]
-        logger.info(f'Got {len(orders)} orders, {orders_ids=}', extra=self.strategy.extra_log)
+        logger.info(
+            f'Got {len(orders)} orders, {orders_ids=}',
+            extra=self.strategy.extra_log
+        )
         return orders
 
     def get_order(self, order_id: str, symbol: OkxSymbol) -> dict:
@@ -474,7 +488,10 @@ class OkxEmulateTrade():
         tp_first_part_percent = self.strategy.tp_first_part_percent
         tp_second_part_percent = 100 - tp_first_part_percent
         sl_tp_data = Namespace(**position.sl_tp_data)
-        if (position.sz == size_contract and sl_tp_data.first_part_closed) or sl_tp_data.second_part_closed:
+        if (
+            (position.sz == size_contract and sl_tp_data.first_part_closed) or
+            sl_tp_data.second_part_closed
+        ):
             open_fee = round(open_execution.data['fee'] * tp_second_part_percent / 100, 10)
         elif sl_tp_data.first_part_closed and not sl_tp_data.second_part_closed:
             open_fee = round(open_execution.data['fee'] * tp_first_part_percent / 100, 10)
@@ -510,7 +527,12 @@ class OkxEmulateTrade():
         )
 
 
-def get_take_profit_grid(position: Position, entry_price: float, spread_percent: float, position_side: str) -> dict:
+def get_take_profit_grid(
+    position: Position,
+    entry_price: float,
+    spread_percent: float,
+    position_side: str
+) -> dict:
     strategy = position.strategy
     lot_sz = position.symbol.okx.lot_sz
     tick_size = position.symbol.okx.tick_size

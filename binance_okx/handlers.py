@@ -62,8 +62,9 @@ def write_ask_bid_to_csv_and_cache_by_symbol(data: dict) -> None:
         okx_bid_price_str = '0'
         okx_bid_size_str = '0'
     data = json.dumps(dict(
-        symbol=symbol, binance_ask_price=binance_ask_price, binance_bid_price=binance_bid_price,
-        okx_ask_price=okx_ask_price, okx_ask_size=okx_ask_size, okx_bid_price=okx_bid_price,
+        symbol=symbol, binance_ask_price=binance_ask_price,
+        binance_bid_price=binance_bid_price, okx_ask_price=okx_ask_price,
+        okx_ask_size=okx_ask_size, okx_bid_price=okx_bid_price,
         okx_bid_size=okx_bid_size, timestamp=timestamp, date_time=date_time
     ))
     key = f'binance_okx_ask_bid_{symbol}'
@@ -75,8 +76,10 @@ def write_ask_bid_to_csv_and_cache_by_symbol(data: dict) -> None:
         file_path = pathlib.Path(settings.CSV_PATH) / f'{symbol}.csv'
         if not file_path.parent.exists():
             os.mkdir(file_path.parent)
-        header = ['symbol', 'date', 'time', 'binance_ask_price', 'binance_bid_price', 'okx_ask_price',
-                  'okx_ask_size', 'okx_bid_price', 'okx_bid_size']
+        header = [
+            'symbol', 'date', 'time', 'binance_ask_price', 'binance_bid_price',
+            'okx_ask_price', 'okx_ask_size', 'okx_bid_price', 'okx_bid_size'
+        ]
         with open(file_path, 'a', newline='') as file:
             writer = csv.writer(file, delimiter=';')
             if file.tell() == 0:
@@ -84,8 +87,9 @@ def write_ask_bid_to_csv_and_cache_by_symbol(data: dict) -> None:
             date = date_time.split(' ')[0]
             time = date_time.split(' ')[1]
             writer.writerow([
-                symbol, date, time, binance_ask_price_str, binance_bid_price_str, okx_ask_price_str,
-                okx_ask_size_str, okx_bid_price_str, okx_bid_size_str
+                symbol, date, time, binance_ask_price_str, binance_bid_price_str,
+                okx_ask_price_str, okx_ask_size_str, okx_bid_price_str,
+                okx_bid_size_str
             ])
 
 

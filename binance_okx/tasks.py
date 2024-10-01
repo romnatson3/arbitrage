@@ -13,11 +13,15 @@ import okx.PublicData
 import okx.Account
 from exchange.celery import app
 from .helper import TaskLock, check_all_conditions, convert_dict_values, get_bills
-from .models import Strategy, Symbol, Account, Position, StatusLog, OkxSymbol, BinanceSymbol, Bill, Execution
+from .models import (
+    Strategy, Symbol, Account, Position, StatusLog, OkxSymbol, BinanceSymbol,
+    Bill, Execution
+)
 from .exceptions import AcquireLockException, ClosePositionException
 from .strategy import (
     open_trade_position, open_emulate_position, increase_trade_position,
-    place_orders_after_open_trade_position, calc_tp_and_place_orders_after_increase_trade_position,
+    place_orders_after_open_trade_position,
+    calc_tp_and_place_orders_after_increase_trade_position,
     time_close_position
 )
 from .ws import (
