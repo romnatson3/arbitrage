@@ -382,18 +382,32 @@ def check_condition(data: dict) -> None:
                 f'open_or_increase_position_{strategy.id}_{symbol}',
                 timeout=None
             )
-            if lock.is_locked():
+            if lock.locked():
                 continue
-            strategy._extra_log.update(symbol=symbol)
-            condition_met, position_side, prices = (
-                check_all_conditions(strategy, symbol, int(data['E']))
+            with TaskLock(
+                f'check_condition_{strategy.id}_{symbol.symbol}',
+                blocking=True
+            ):
+                if lock.locked():
+                    continue
+                strategy._extra_log.update(symbol=symbol)
+                condition_met, position_side, prices = (
+                    check_all_conditions(strategy, symbol, int(data['E']))
+                )
+                if condition_met:
+                    if lock.acquire():
+                        logger.warning(
+                            'Condition met. TaskLock acquired',
+                            extra=strategy.extra_log
+                        )
+                        open_or_increase_position.delay(
+                            strategy.id, symbol.symbol, position_side, prices
+                        )
+        except AcquireLockException:
+            logger.critical(
+                'Queue is overflowed. Task was dropped',
+                extra=strategy.extra_log
             )
-            if condition_met:
-                if lock.acquire():
-                    logger.warning('Condition met, TaskLock acquired', extra=strategy.extra_log)
-                    open_or_increase_position.delay(
-                        strategy.id, symbol.symbol, position_side, prices
-                    )
         except Exception as e:
             logger.exception(e, extra=strategy.extra_log)
 

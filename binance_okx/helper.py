@@ -1,12 +1,10 @@
 import logging
 import time
-from math import floor
 import json
 from decimal import Decimal, ROUND_DOWN
 from typing import Optional, Any
-import okx.Account
 from django_redis import get_redis_connection
-from django.core.cache import cache
+import okx.Account
 from .exceptions import AcquireLockException
 from .models import OkxSymbol, Strategy, Symbol, Account, Execution
 from .misc import convert_dict_values
@@ -14,7 +12,7 @@ from .exceptions import GetBillsException
 
 
 logger = logging.getLogger(__name__)
-conection = get_redis_connection('default')
+connection = get_redis_connection('default')
 
 
 def round_by_lot_sz(value: float, lot_sz: str) -> float:
@@ -98,23 +96,48 @@ calc = Calculator()
 
 
 class TaskLock():
-    def __init__(self, key: str, timeout: int = 15) -> None:
+    def __init__(
+        self, key: str,
+        timeout: Optional[int] = 10,
+        blocking: bool = False,
+        blocking_timeout: Optional[int] = 1
+    ) -> None:
         self.key = key
         self.timeout = timeout
+        self.blocking = blocking
+        self.blocking_timeout = blocking_timeout
+        self.sleep = 0.001
 
     def acquire(self) -> bool:
-        return cache.add(self.key, 1, timeout=self.timeout)
+        if not self.blocking:
+            return self.do_acquire()
+        stop_trying_at = None
+        if self.blocking_timeout:
+            stop_trying_at = time.monotonic() + self.blocking_timeout
+        while True:
+            if self.do_acquire():
+                return True
+            if not self.blocking:
+                return False
+            if stop_trying_at and time.monotonic() > stop_trying_at:
+                return False
+            time.sleep(self.sleep)
 
-    def release(self) -> None:
-        cache.delete(self.key)
+    def do_acquire(self) -> bool:
+        if connection.set(self.key, 1, nx=True, ex=self.timeout):
+            return True
+        return False
 
-    def is_locked(self) -> bool:
-        return True if cache.get(self.key) else False
+    def release(self) -> bool:
+        return connection.delete(self.key) == 1
+
+    def locked(self) -> bool:
+        return connection.exists(self.key) == 1
 
     def __enter__(self):
-        if not self.acquire():
-            raise AcquireLockException('Failed to acquire lock')
-        return self
+        if self.acquire():
+            return self
+        raise AcquireLockException('Failed to acquire lock')
 
     def __exit__(self, exc_type, exc_value, traceback):
         self.release()
@@ -125,7 +148,7 @@ def check_all_conditions(strategy: Strategy, symbol: Symbol, max_score: int) -> 
     prices = {}
     nothing = False, '', {}
     min_score = max_score - strategy.search_duration
-    records = conection.zrangebyscore(
+    records = connection.zrangebyscore(
         f'binance_okx_ask_bid_{symbol.symbol}', min_score, max_score
     )
     if not records:
@@ -313,8 +336,7 @@ def check_second_condition(
 def calculation_delta_and_points_for_entry(
     symbol: Symbol, position_side: str, previous_prices: dict
 ) -> dict:
-    conection = get_redis_connection('default')
-    last_prices = conection.zrange(f'binance_okx_ask_bid_{symbol.symbol}', -1, -1)[0]
+    last_prices = connection.zrange(f'binance_okx_ask_bid_{symbol.symbol}', -1, -1)[0]
     last_prices = json.loads(last_prices)
     binance_last_ask = last_prices['binance_ask_price']
     binance_last_bid = last_prices['binance_bid_price']

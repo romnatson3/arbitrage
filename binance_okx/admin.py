@@ -334,7 +334,7 @@ class ExecutionAdminMixin():
         data: dict = sort_data(obj.data, Execution.get_empty_data())
         return get_pretty_text(data)
 
-    @admin.display(description='Type', ordering='_type')
+    @admin.display(description='Type')
     def _type(self, obj) -> str:
         return obj.data.get('subType', '')
 
@@ -411,6 +411,7 @@ class ExecutionInline(ExecutionAdminMixin, admin.TabularInline):
         'bill_id', 'trade_id', 'created_at'
     )
     extra = 0
+    ordering = ('-data__subType',)
 
     def has_delete_permission(self, request, obj=None):
         return False
