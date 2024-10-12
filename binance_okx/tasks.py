@@ -1,5 +1,4 @@
 import logging
-import threading
 import time
 import re
 from django.core.cache import cache
@@ -116,11 +115,15 @@ def update_symbols() -> None:
                 binance_symbol = re.sub(r'\d', '', j.symbol)
                 if i.symbol == j.symbol or okx_symbol == binance_symbol:
                     if i.symbol != j.symbol:
-                        logger.info(f'Found similar symbols, okx: {i.symbol}, binance: {j.symbol}')
+                        logger.info(
+                            f'Found similar symbols, okx: {i.symbol}, '
+                            f'binance: {j.symbol}'
+                        )
                     available_symbols.add(i.symbol)
                     is_active = i.is_active and j.is_active
                     Symbol.objects.update_or_create(
-                        symbol=i.symbol, defaults={'okx': i, 'binance': j, 'is_active': is_active}
+                        symbol=i.symbol,
+                        defaults={'okx': i, 'binance': j, 'is_active': is_active}
                     )
                     break
         for i in Symbol.objects.all():
@@ -157,7 +160,9 @@ def update_bills():
                             f'for account: {account.name}'
                         )
                     else:
-                        logger.debug(f'{account.name}. Got {len(bills)} last bills from exchange')
+                        logger.debug(
+                            f'{account.name}. Got {len(bills)} last bills from exchange'
+                        )
                     if not bills:
                         continue
                     new_bills: list[Bill] = [
@@ -409,26 +414,15 @@ def run_websocket_okx_positions() -> None:
             if not accounts:
                 logger.debug('WebSocketOkxPositions no okx accounts found')
                 return
-            threads = {i.name: i for i in threading.enumerate()}
             for account in accounts:
-                name = f'run_forever_WebSocketOkxPositions_{account.id}'
-                if name in threads:
-                    thread = threads[name]
-                    if thread.is_alive():
-                        logger.debug(
-                            f'{account.name}. WebSocketOkxPositions '
-                            'is now running'
-                        )
-                        continue
-                    else:
-                        logger.debug(
-                            f'{account.name}. WebSocketOkxPositions is exist '
-                            'but not running'
-                        )
-                        thread.kill()
-                ws_okx_positions = WebSocketOkxPositions(account=account)
-                ws_okx_positions.start()
-                ws_okx_positions.add_handler(
+                ws = WebSocketOkxPositions(account=account)
+                if ws.is_alive():
+                    logger.debug('Alive and running', extra={'symbol': ws.name})
+                    continue
+                else:
+                    ws.kill()
+                ws.start()
+                ws.add_handler(
                     lambda data: create_or_update_position.delay(data)
                 )
                 time.sleep(3)
@@ -447,26 +441,15 @@ def run_websocket_okx_orders() -> None:
             if not accounts:
                 logger.debug('WebSocketOkxOrders no okx accounts found')
                 return
-            threads = {i.name: i for i in threading.enumerate()}
             for account in accounts:
-                name = f'run_forever_WebSocketOkxOrders_{account.id}'
-                if name in threads:
-                    thread = threads[name]
-                    if thread.is_alive():
-                        logger.debug(
-                            f'{account.name}. WebSocketOkxOrders '
-                            'is now running'
-                        )
-                        continue
-                    else:
-                        logger.debug(
-                            f'{account.name}. WebSocketOkxOrders is exist '
-                            'but not running'
-                        )
-                        thread.kill()
-                ws_okx_orders = WebSocketOkxOrders(account=account)
-                ws_okx_orders.start()
-                ws_okx_orders.add_handler(lambda data: orders_handler.delay(data))
+                ws = WebSocketOkxOrders(account=account)
+                if ws.is_alive():
+                    logger.debug('Alive and running', extra={'symbol': ws.name})
+                    continue
+                else:
+                    ws.kill()
+                ws.start()
+                ws.add_handler(lambda data: orders_handler.delay(data))
                 time.sleep(3)
     except AcquireLockException:
         logger.debug('Task run_websocket_okx_orders is now running')
@@ -475,33 +458,17 @@ def run_websocket_okx_orders() -> None:
         raise e
 
 
-ws_okx_ask_bid = WebSocketOkxAskBid()
-ws_binance_ask_bid = WebSocketBinaceAskBid()
-ws_okx_market_price = WebSocketOkxMarketPrice()
-ws_okx_last_price = WebSocketOkxLastPrice()
-
-
 @app.task
 def run_websocket_okx_last_price() -> None:
     try:
         with TaskLock('task_run_websocket_okx_last_price'):
-            ws_okx_last_price.threads.update(
-                (i.name, i) for i in threading.enumerate()
-                if i.name in ws_okx_last_price.threads
-            )
-            for thread in ws_okx_last_price.threads.values():
-                if not thread or not thread.is_alive():
-                    logger.warning(f'Thread "{thread}" is not running')
-                    ws_okx_last_price.kill()
-                    break
+            ws = WebSocketOkxLastPrice()
+            if ws.is_alive():
+                logger.debug('Alive and running', extra={'symbol': ws.name})
             else:
-                logger.debug(f'{ws_okx_last_price.name} all threads are running')
-                return
-            ws_okx_last_price.start()
-            ws_okx_last_price.add_handler(
-                lambda data: closing_position_by_limit.delay(data)
-            )
-            time.sleep(3)
+                ws.kill()
+                ws.start()
+                ws.add_handler(lambda data: closing_position_by_limit.delay(data))
     except AcquireLockException:
         logger.debug('Task run_websocket_okx_last_price is now running')
     except Exception as e:
@@ -513,21 +480,13 @@ def run_websocket_okx_last_price() -> None:
 def run_websocket_okx_market_price() -> None:
     try:
         with TaskLock('task_run_websocket_okx_market_price'):
-            ws_okx_market_price.threads.update(
-                (i.name, i) for i in threading.enumerate()
-                if i.name in ws_okx_market_price.threads
-            )
-            for thread in ws_okx_market_price.threads.values():
-                if not thread or not thread.is_alive():
-                    logger.warning(f'Thread "{thread}" is not running')
-                    ws_okx_market_price.kill()
-                    break
+            ws = WebSocketOkxMarketPrice()
+            if ws.is_alive():
+                logger.debug('Alive and running', extra={'symbol': ws.name})
             else:
-                logger.debug(f'{ws_okx_market_price.name} all threads are running')
-                return
-            ws_okx_market_price.start()
-            ws_okx_market_price.add_handler(save_okx_market_price_to_cache)
-            time.sleep(3)
+                ws.kill()
+                ws.start()
+                ws.add_handler(save_okx_market_price_to_cache)
     except AcquireLockException:
         logger.debug('Task run_websocket_okx_market_price is now running')
     except Exception as e:
@@ -539,22 +498,14 @@ def run_websocket_okx_market_price() -> None:
 def run_websocket_okx_ask_bid() -> None:
     try:
         with TaskLock('task_run_websocket_okx_ask_bid'):
-            ws_okx_ask_bid.threads.update(
-                (i.name, i) for i in threading.enumerate()
-                if i.name in ws_okx_ask_bid.threads
-            )
-            for thread in ws_okx_ask_bid.threads.values():
-                if not thread or not thread.is_alive():
-                    logger.warning(f'Thread "{thread}" is not running')
-                    ws_okx_ask_bid.kill()
-                    break
+            ws = WebSocketOkxAskBid()
+            if ws.is_alive():
+                logger.debug('Alive and running', extra={'symbol': ws.name})
             else:
-                logger.debug(f'{ws_okx_ask_bid.name} all threads are running')
-                return
-            ws_okx_ask_bid.start()
-            ws_okx_ask_bid.add_handler(save_okx_ask_bid_to_cache)
-            ws_okx_ask_bid.add_handler(closing_position_by_market)
-            time.sleep(3)
+                ws.kill()
+                ws.start()
+                ws.add_handler(save_okx_ask_bid_to_cache)
+                ws.add_handler(closing_position_by_market)
     except AcquireLockException:
         logger.debug('Task run_websocket_okx_ask_bid is now running')
     except Exception as e:
@@ -566,22 +517,14 @@ def run_websocket_okx_ask_bid() -> None:
 def run_websocket_binance_ask_bid() -> None:
     try:
         with TaskLock('task_run_websocket_binance_ask_bid'):
-            ws_binance_ask_bid.threads.update(
-                (i.name, i) for i in threading.enumerate()
-                if i.name in ws_binance_ask_bid.threads
-            )
-            for thread in ws_binance_ask_bid.threads.values():
-                if not thread or not thread.is_alive():
-                    logger.warning(f'Thread "{thread}" is not running')
-                    ws_binance_ask_bid.kill()
-                    break
+            ws = WebSocketBinaceAskBid()
+            if ws.is_alive():
+                logger.debug('Alive and running', extra={'symbol': ws.name})
             else:
-                logger.debug(f'{ws_binance_ask_bid.name} all threads are running')
-                return
-            ws_binance_ask_bid.start()
-            ws_binance_ask_bid.add_handler(write_ask_bid_to_csv_and_cache_by_symbol)
-            ws_binance_ask_bid.add_handler(lambda data: check_condition.delay(data))
-            time.sleep(3)
+                ws.kill()
+                ws.start()
+                ws.add_handler(write_ask_bid_to_csv_and_cache_by_symbol)
+                ws.add_handler(lambda data: check_condition.delay(data))
     except AcquireLockException:
         logger.debug('Task run_websocket_binance_ask_bid is now running')
     except Exception as e:
