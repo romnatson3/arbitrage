@@ -21,10 +21,11 @@ class CustomFormatter(logging.Formatter):
 
     def format(self, record):
         formatter = logging.Formatter(self._fmt)
-        record.__dict__.setdefault('created_by', '')
-        record.__dict__.setdefault('strategy', '')
-        record.__dict__.setdefault('symbol', '')
-        record.__dict__.setdefault('position', '')
+        record.__dict__.setdefault('created_by', '----')
+        record.__dict__.setdefault('strategy', '----------')
+        record.__dict__.setdefault('symbol', '---------------')
+        record.__dict__.setdefault('position', '-----')
+        record.symbol = f'{str(record.symbol):<15.15}'
         if record.levelno == settings.TRACE_LEVEL_NUM:
             record.levelname = 'TRACE'
             formatter = logging.Formatter(self.trace_fmt)

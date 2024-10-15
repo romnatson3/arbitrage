@@ -164,7 +164,12 @@ class WebSocketOkxAskBid(metaclass=SingletonMeta):
             if previous_ask_bid[0] == data['askPx'] and previous_ask_bid[1] == data['bidPx']:
                 return
         self._previous_ask_bid[data['instId']] = [data['askPx'], data['bidPx']]
-        keys = ['instId', 'askPx', 'askSz', 'bidPx', 'bidSz', 'ts']
+        date_time = (
+            datetime.fromtimestamp(int(data['ts']) / 1000)
+            .strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
+        )
+        data['date_time'] = date_time
+        keys = ['instId', 'askPx', 'askSz', 'bidPx', 'bidSz', 'ts', 'date_time']
         data = {k: v for k, v in data.items() if k in keys}
         return data
 
@@ -268,7 +273,12 @@ class WebSocketOkxLastPrice(WebSocketOkxAskBid):
             if previous_last_price[1] == data['lastSz']:
                 return
         self._previous_last_price[data['instId']] = [data['last'], data['lastSz']]
-        keys = ['instId', 'last', 'lastSz', 'ts']
+        date_time = (
+            datetime.fromtimestamp(int(data['ts']) / 1000)
+            .strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
+        )
+        data['date_time'] = date_time
+        keys = ['instId', 'last', 'lastSz', 'ts', 'date_time']
         data = {k: v for k, v in data.items() if k in keys}
         return data
 

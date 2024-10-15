@@ -201,6 +201,8 @@ def trace(self, message, *args, **kwargs):
 
 
 logging.Logger.trace = trace
+logs_dir = Path(BASE_DIR, 'logs')
+logs_dir.mkdir(exist_ok=True)
 
 
 LOGGING = {
@@ -212,9 +214,9 @@ LOGGING = {
             'datefmt': '%d.%m.%Y %H:%M:%S'
         },
         'custom': {
-            'format': '[%(asctime)s] %(levelname)-7s %(name)-17s [%(created_by)s] '
-                      '[%(strategy)s] [%(symbol)s] [%(position)s] %(message)s',
-            'datefmt': '%d.%m.%Y %H:%M:%S',
+            'format': '[%(asctime)s.%(msecs)03d] %(levelname)-7s %(created_by).4s '
+                      '%(strategy).10s %(symbol)s %(position)-6s %(message)s',
+            'datefmt': '%d.%m.%Y %H:%M:%S.%f',
             'class': 'binance_okx.logger.CustomFormatter',
         },
     },
@@ -230,6 +232,16 @@ LOGGING = {
             'class': 'binance_okx.logger.DatabaseLogHandler',
             'level': 'INFO',
         },
+        'file': {
+            'class': 'logging.handlers.RotatingFileHandler',
+            'level': 'TRACE',
+            'filename': logs_dir / 'arbitrage.log',
+            'maxBytes': 1024 * 1024 * 500,  # 500 MB
+            'backupCount': 10,
+            'formatter': 'custom',
+            'encoding': 'utf-8',
+            'mode': 'a'
+        },
     },
     'loggers': {
         'root': {
@@ -242,7 +254,7 @@ LOGGING = {
             'propagate': True,
         },
         'binance_okx': {
-            'handlers': ['binance_okx'],
+            'handlers': ['binance_okx', 'file'],
             'level': 'DEBUG',
             # 'level': 'TRACE',
             'propagate': True,

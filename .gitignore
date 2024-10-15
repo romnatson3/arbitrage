@@ -10,3 +10,4 @@ media/
 dumps/
 ws_async.py
 exchange.service
+logs/
