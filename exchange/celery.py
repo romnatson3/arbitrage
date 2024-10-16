@@ -79,7 +79,7 @@ app.conf.update(
         'clean_db_log': {
             'task': 'binance_okx.tasks.clean_db_log',
             'schedule': crontab(minute=0, hour='*'),
-            'args': (3,)
+            'args': (30,)
         },
     }
 )

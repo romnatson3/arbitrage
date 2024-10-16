@@ -1,9 +1,11 @@
 import logging
 import time
+from datetime import datetime
 import json
 from decimal import Decimal, ROUND_DOWN
 from typing import Optional, Any
 from django_redis import get_redis_connection
+from django.utils import timezone
 import okx.Account
 from .exceptions import AcquireLockException
 from .models import OkxSymbol, Strategy, Symbol, Account, Execution
@@ -13,6 +15,14 @@ from .exceptions import GetBillsException
 
 logger = logging.getLogger(__name__)
 connection = get_redis_connection('default')
+
+
+def get_current_date_time() -> str:
+    date_time = (
+        datetime.fromtimestamp(timezone.now().timestamp())
+        .strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
+    )
+    return date_time
 
 
 def round_by_lot_sz(value: float, lot_sz: str) -> float:

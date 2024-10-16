@@ -2,8 +2,6 @@ import logging
 import random
 import time
 from decimal import Decimal, ROUND_DOWN
-from datetime import datetime
-from django.utils import timezone
 from types import SimpleNamespace as Namespace
 import okx.Trade as Trade
 import okx.Account as Account
@@ -13,7 +11,7 @@ from .exceptions import (
     CancelOrderException, ClosePositionException
 )
 from .misc import convert_dict_values
-from .helper import calc, round_by_lot_sz, price_to_string
+from .helper import calc, round_by_lot_sz, price_to_string, get_current_date_time
 
 
 logger = logging.getLogger(__name__)
@@ -452,8 +450,7 @@ class OkxEmulateTrade():
         date_time: str = '',
     ) -> None:
         if not date_time:
-            date_time = datetime.fromtimestamp(
-                timezone.now().timestamp()).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
+            date_time = get_current_date_time()
         size_usdt = calc.get_usdt_from_sz(self.symbol.okx, size_contract, close_price)
         if size_contract == position.sz:
             position.is_open = False

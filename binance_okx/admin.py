@@ -430,14 +430,15 @@ class PositionAdmin(admin.ModelAdmin):
         '_trade_ids', '_contract', '_amount', '_duration', 'updated_at'
     )
     fields = (
-        'id', 'is_open', 'strategy', 'symbol', 'mode', 'account', '_trade_ids', '_position_data',
+        'id', 'is_open', 'strategy', 'symbol', 'mode', 'account', 'trade_ids', '_position_data',
         '_sl_tp_data', '_ask_bid_data', 'updated_at', 'created_at'
     )
     search_fields = ('strategy__name', 'symbol__symbol')
     list_display_links = ('id', 'strategy')
     readonly_fields = (
         'id', 'updated_at', 'created_at', '_position_data', '_sl_tp_data',
-        '_ask_bid_data'
+        '_ask_bid_data', '_position_id', '_contract', '_amount',
+        'strategy', 'symbol', 'account', 'mode', 'is_open'
     )
     list_filter = ('is_open', 'mode', PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter)
     actions = ['export_csv_action', 'toggle_open_close', 'manual_fill_execution']
@@ -460,8 +461,8 @@ class PositionAdmin(admin.ModelAdmin):
     def has_add_permission(self, request):
         return False
 
-    def has_change_permission(self, request, obj=None):
-        return False
+    # def has_change_permission(self, request, obj=None):
+    #     return False
 
     @admin.display(description='Position data')
     def _position_data(self, obj) -> str:
@@ -685,7 +686,7 @@ class BillAdmin(admin.ModelAdmin):
         'account', 'bill_id', '_symbol', '_order_id', '_trade_id', '_sub_type',
         '_contract', '_inst_id', '_datetime', 'updated_at'
     )
-    search_fields = ('bill_id',)
+    search_fields = ('bill_id', 'data__ordId', 'data__tradeId')
     list_filter = ('account', BillInstrumentFilter, BillSubTypeFilter)
     fields = ('bill_id', 'account', '_data', 'created_at', 'updated_at')
     list_display_links = ('bill_id', 'account')

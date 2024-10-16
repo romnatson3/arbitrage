@@ -38,8 +38,8 @@ def write_ask_bid_to_csv_and_cache_by_symbol(data: dict) -> None:
     binance_ask_size_str = str(binance_ask_size).replace('.', ',')
     binance_bid_price_str = str(binance_bid_price).replace('.', ',')
     binance_bid_size_str = str(binance_bid_size).replace('.', ',')
-    timestamp = int(data['E'])
-    date_time = datetime.fromtimestamp(timestamp / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
+    timestamp = int(data['cts'])
+    date_time = data['cdt']
     okx_last_data = connection.zrange(f'okx_ask_bid_{symbol}', -1, -1)
     if okx_last_data:
         okx_last_data = json.loads(okx_last_data[0])
@@ -101,7 +101,7 @@ def save_okx_ask_bid_to_cache(data: dict) -> None:
     ask_size = float(data['askSz'])
     bid_price = float(data['bidPx'])
     bid_size = float(data['bidSz'])
-    timestamp = int(data['ts'])
+    timestamp = int(data['cts'])
     key = f'okx_ask_bid_{symbol}'
     data = json.dumps(dict(
         symbol=symbol,
@@ -263,8 +263,7 @@ def closing_position_by_market(data: dict) -> None:
         symbol = ''.join(data['instId'].split('-')[:-1])
         ask_price = float(data['askPx'])
         bid_price = float(data['bidPx'])
-        timestamp = int(data['ts'])
-        date_time = datetime.fromtimestamp(timestamp / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
+        date_time = data['cdt']
         strategies = Strategy.objects.cache(symbols__symbol=symbol, enabled=True)
         for strategy in strategies:
             if strategy.mode == Strategy.Mode.trade:
@@ -297,8 +296,7 @@ def closing_position_by_market(data: dict) -> None:
 def closing_position_by_limit(data: dict) -> None:
     try:
         symbol = ''.join(data['instId'].split('-')[:-1])
-        timestamp = int(data['ts'])
-        date_time = datetime.fromtimestamp(timestamp / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
+        date_time = data['cdt']
         last_price = float(data['last'])
         last_size = float(data['lastSz'])
         strategies = Strategy.objects.cache(symbols__symbol=symbol, enabled=True)
@@ -314,7 +312,7 @@ def closing_position_by_limit(data: dict) -> None:
 
 @app.task
 def closing_emulate_position_by_limit(
-        strategy_id: int, symbol: str, last_price: float, last_size: float, date_time: str
+    strategy_id: int, symbol: str, last_price: float, last_size: float, date_time: str
 ) -> None:
     try:
         strategy = Strategy.objects.cache(id=strategy_id)[0]

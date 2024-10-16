@@ -41,7 +41,7 @@ User = get_user_model()
 
 
 @app.task
-def clean_db_log(days: int = 5) -> None:
+def clean_db_log(days: int = 30) -> None:
     logger.info('Cleaning database log')
     date = timezone.now() - timezone.timedelta(days=days)
     records, _ = StatusLog.objects.filter(created_at__lte=date).delete()
@@ -391,7 +391,7 @@ def check_condition(data: dict) -> None:
                 continue
             strategy._extra_log.update(symbol=symbol)
             condition_met, position_side, prices = (
-                check_all_conditions(strategy, symbol, int(data['E']))
+                check_all_conditions(strategy, symbol, int(data['cts']))
             )
             if condition_met:
                 if lock.acquire():

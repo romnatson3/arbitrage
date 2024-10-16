@@ -14,6 +14,7 @@ import hmac
 from typing import Callable
 from django.conf import settings
 from binance_okx.models import Strategy, Account
+from binance_okx.helper import get_current_date_time
 
 
 logger = logging.getLogger(__name__)
@@ -164,12 +165,9 @@ class WebSocketOkxAskBid(metaclass=SingletonMeta):
             if previous_ask_bid[0] == data['askPx'] and previous_ask_bid[1] == data['bidPx']:
                 return
         self._previous_ask_bid[data['instId']] = [data['askPx'], data['bidPx']]
-        date_time = (
-            datetime.fromtimestamp(int(data['ts']) / 1000)
-            .strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
-        )
-        data['date_time'] = date_time
-        keys = ['instId', 'askPx', 'askSz', 'bidPx', 'bidSz', 'ts', 'date_time']
+        data['cts'] = int(time.time() * 1000)
+        data['cdt'] = get_current_date_time()
+        keys = ['instId', 'askPx', 'askSz', 'bidPx', 'bidSz', 'ts', 'cts', 'cdt']
         data = {k: v for k, v in data.items() if k in keys}
         return data
 
@@ -273,12 +271,9 @@ class WebSocketOkxLastPrice(WebSocketOkxAskBid):
             if previous_last_price[1] == data['lastSz']:
                 return
         self._previous_last_price[data['instId']] = [data['last'], data['lastSz']]
-        date_time = (
-            datetime.fromtimestamp(int(data['ts']) / 1000)
-            .strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
-        )
-        data['date_time'] = date_time
-        keys = ['instId', 'last', 'lastSz', 'ts', 'date_time']
+        data['cts'] = int(time.time() * 1000)
+        data['cdt'] = get_current_date_time()
+        keys = ['instId', 'last', 'lastSz', 'ts', 'cts', 'cdt']
         data = {k: v for k, v in data.items() if k in keys}
         return data
 
@@ -323,12 +318,9 @@ class WebSocketOkxMarketPrice(WebSocketOkxAskBid):
             if previous_market_price == data['markPx']:
                 return
         self._previous_market_price[data['instId']] = data['markPx']
-        date_time = (
-            datetime.fromtimestamp(int(data['ts']) / 1000)
-            .strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
-        )
-        data['date_time'] = date_time
-        keys = ['instId', 'markPx', 'ts', 'date_time']
+        data['cts'] = int(time.time() * 1000)
+        data['cdt'] = get_current_date_time()
+        keys = ['instId', 'markPx', 'ts', 'cts', 'cdt']
         return {k: v for k, v in data.items() if k in keys}
 
 
@@ -375,17 +367,16 @@ class WebSocketBinaceAskBid(WebSocketOkxAskBid):
             return
         return message
 
-    def _post_message_handler(self, message: dict) -> None | dict:
-        previous_ask_bid = self._previous_ask_bid.get(message['s'])
+    def _post_message_handler(self, data: dict) -> None | dict:
+        previous_ask_bid = self._previous_ask_bid.get(data['s'])
         if previous_ask_bid:
-            if previous_ask_bid[0] == message['a'] and previous_ask_bid[1] == message['b']:
+            if previous_ask_bid[0] == data['a'] and previous_ask_bid[1] == data['b']:
                 return
-        self._previous_ask_bid[message['s']] = [message['a'], message['b']]
-        date_time = datetime.fromtimestamp(
-            int(message['E']) / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
-        message['date_time'] = date_time
-        keys = ['s', 'b', 'B', 'a', 'A', 'E', 'date_time']
-        return {k: v for k, v in message.items() if k in keys}
+        self._previous_ask_bid[data['s']] = [data['a'], data['b']]
+        data['cts'] = int(time.time() * 1000)
+        data['cdt'] = get_current_date_time()
+        keys = ['s', 'b', 'B', 'a', 'A', 'E', 'cts', 'cdt']
+        return {k: v for k, v in data.items() if k in keys}
 
 
 class WebSocketOkxOrders(WebSocketOkxAskBid):
