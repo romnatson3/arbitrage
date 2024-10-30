@@ -1,5 +1,62 @@
 from django.contrib.admin import SimpleListFilter
-from .models import Strategy, Position, Bill
+from .models import Strategy, Position, Bill, Order
+
+
+class OrderInstrumentFilter(SimpleListFilter):
+    title = 'Instrument'
+    parameter_name = 'instrument'
+
+    def lookups(self, request, model_admin):
+        return [
+            (instrument, instrument)
+            for instrument in (
+                Order.objects.values_list('data__instId', flat=True)
+                .order_by('data__instId').distinct()
+            )
+        ]
+
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(data__instId=self.value())
+        return queryset
+
+
+class OrderTypeFilter(SimpleListFilter):
+    title = 'Type'
+    parameter_name = 'type'
+
+    def lookups(self, request, model_admin):
+        return [
+            (order_type, order_type)
+            for order_type in (
+                Order.objects.values_list('data__ordType', flat=True)
+                .order_by('data__ordType').distinct()
+            )
+        ]
+
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(data__ordType=self.value())
+        return queryset
+
+
+class OrderStateFilter(SimpleListFilter):
+    title = 'State'
+    parameter_name = 'state'
+
+    def lookups(self, request, model_admin):
+        return [
+            (order_state, order_state)
+            for order_state in (
+                Order.objects.values_list('data__state', flat=True)
+                .order_by('data__state').distinct()
+            )
+        ]
+
+    def queryset(self, request, queryset):
+        if self.value():
+            return queryset.filter(data__state=self.value())
+        return queryset
 
 
 class BillInstrumentFilter(SimpleListFilter):
@@ -9,7 +66,10 @@ class BillInstrumentFilter(SimpleListFilter):
     def lookups(self, request, model_admin):
         return [
             (instrument, instrument)
-            for instrument in Bill.objects.values_list('data__instId', flat=True).order_by('data__instId').distinct()
+            for instrument in (
+                Bill.objects.values_list('data__instId', flat=True)
+                .order_by('data__instId').distinct()
+            )
         ]
 
     def queryset(self, request, queryset):
@@ -25,7 +85,10 @@ class BillSubTypeFilter(SimpleListFilter):
     def lookups(self, request, model_admin):
         return [
             (sub_type, sub_type)
-            for sub_type in Bill.objects.values_list('data__subType', flat=True).order_by('data__subType').distinct()
+            for sub_type in (
+                Bill.objects.values_list('data__subType', flat=True)
+                .order_by('data__subType').distinct()
+            )
         ]
 
     def queryset(self, request, queryset):

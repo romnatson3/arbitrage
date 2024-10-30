@@ -194,15 +194,15 @@ def create_or_update_position(data: dict) -> None:
         account = Account.objects.get(id=data['account_id'])
         try:
             strategy = Strategy.objects.get(
-                enabled=True, mode='trade', second_account=account, symbols=symbol)
+                enabled=True, mode='trade', second_account=account, symbols=symbol
+            )
         except Strategy.DoesNotExist:
             logger.error(
-                f'Not found enabled strategy for symbol={symbol.symbol} '
-                f'and account={account.name}'
+                'Not found enabled strategy', extra={'symbol': symbol.symbol}
             )
             return
         strategy._extra_log.update(symbol=symbol.symbol)
-        position = strategy.get_last_trade_open_position(symbol.symbol)
+        position = strategy.get_last_open_trade_position(symbol.symbol)
         if position:
             strategy._extra_log.update(position=position.id)
             if data['pos'] == 0:
@@ -311,14 +311,14 @@ def check_position_close_time(strategy_id: int, symbol: str) -> None:
         strategy._extra_log.update(symbol=symbol)
         with TaskLock(f'check_position_close_time_{strategy_id}_{symbol.symbol}'):
             if strategy.mode == Strategy.Mode.trade:
-                position = strategy.get_last_trade_open_position(symbol.symbol)
+                position = strategy.get_last_open_trade_position(symbol.symbol)
                 if position:
                     strategy._extra_log.update(symbol=symbol.symbol, position=position.id)
                     if time_close_position(strategy, position):
                         trade = OkxTrade(strategy, position.symbol, position.sz, position.side)
                         trade.close_entire_position()
             elif strategy.mode == Strategy.Mode.emulate:
-                position = strategy.get_last_emulate_open_position(symbol.symbol)
+                position = strategy.get_last_open_emulate_position(symbol.symbol)
                 if position:
                     strategy._extra_log.update(symbol=symbol.symbol, position=position.id)
                     if time_close_position(strategy, position):

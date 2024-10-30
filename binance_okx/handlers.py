@@ -9,7 +9,7 @@ from django_redis import get_redis_connection
 from django.core.cache import cache
 from django.conf import settings
 from exchange.celery import app
-from .models import Strategy
+from .models import Strategy, Order
 from .misc import convert_dict_values
 from .trade import OkxTrade, OkxEmulateTrade
 from .exceptions import AcquireLockException
@@ -120,8 +120,8 @@ def save_okx_ask_bid_to_cache(data: dict) -> None:
 @app.task
 def orders_handler(data: dict) -> None:
     try:
-        data = convert_dict_values(data)
-        data = Namespace(**data)
+        _data: dict = convert_dict_values(data)
+        data = Namespace(**_data)
         symbol: str = ''.join(data.instId.split('-')[:-1])
         try:
             strategy = Strategy.objects.get(
@@ -129,13 +129,17 @@ def orders_handler(data: dict) -> None:
                 symbols__symbol=symbol
             )
         except Strategy.DoesNotExist:
-            logger.error(
-                f'Not found enabled strategy for {symbol=} and {data.account_id=}',
-                extra=dict(symbol=symbol)
-            )
+            logger.error('Not found enabled strategy', extra=dict(symbol=symbol))
             return
         strategy._extra_log.update(symbol=symbol)
+        Order.objects.create(
+            order_id=data.ordId,
+            trade_id=data.tradeId,
+            account_id=data.account_id,
+            data=_data
+        )
         logger.debug(
+            'Save order to database: '
             f'orderId={data.ordId}, algoId={data.algoId}, ordType={data.ordType}, '
             f'state={data.state}, side={data.side}, posSide={data.posSide}, '
             f'avgPx={data.avgPx}, sz={data.sz}, notionalUsd={data.notionalUsd:.5f}, '
@@ -144,23 +148,27 @@ def orders_handler(data: dict) -> None:
             f'fillPnl={data.fillPnl}, fillTime={data.fillTime}',
             extra=strategy.extra_log
         )
-        positions = sorted(
-            filter(
-                lambda x: x.symbol.symbol == symbol and x.is_open is True,
-                strategy.positions.all()
-            ),
-            key=lambda x: x.id, reverse=True
-        )
-        if not positions:
-            logger.debug('No open position found. Stop processing order',
-                         extra=strategy.extra_log)
+        position = strategy.get_last_open_trade_position(symbol)
+        if not position:
+            logger.debug(
+                f'Stop processing order_id={data.ordId}. No found open position',
+                extra=strategy.extra_log
+            )
             return
-        position = positions[0]
         strategy._extra_log.update(position=position.id)
+        if data.tradeId:
+            position.trade_ids.append(data.tradeId)
+            logger.debug(
+                f'Add trade_id={data.tradeId} to position trade_ids',
+                extra=strategy.extra_log
+            )
+            position.save(update_fields=['trade_ids'])
         sl_tp_data = Namespace(**position.sl_tp_data)
-        if data.state != 'filled':
-            logger.debug(f'Order {data.ordId} is not filled. Stop processing order',
-                         extra=strategy.extra_log)
+        if data.state not in ['filled', 'partially_filled']:
+            logger.debug(
+                f'Stop processing order_id={data.ordId}. Order is not filled',
+                extra=strategy.extra_log
+            )
             return
         if data.ordType == 'limit':
             if strategy.close_position_type == 'limit':
@@ -172,8 +180,7 @@ def orders_handler(data: dict) -> None:
                         extra=strategy.extra_log
                     )
                     position.sl_tp_data['first_part_closed'] = True
-                    position.trade_ids.append(data.tradeId)
-                    position.save(update_fields=['sl_tp_data', 'trade_ids'])
+                    position.save(update_fields=['sl_tp_data'])
                     logger.info(
                         f'First part sz={sl_tp_data.tp_first_part} of position is closed',
                         extra=strategy.extra_log
@@ -198,8 +205,7 @@ def orders_handler(data: dict) -> None:
                         extra=strategy.extra_log
                     )
                     position.sl_tp_data['second_part_closed'] = True
-                    position.trade_ids.append(data.tradeId)
-                    position.save(update_fields=['sl_tp_data', 'trade_ids'])
+                    position.save(update_fields=['sl_tp_data'])
                     logger.info(
                         f'Second part sz={sl_tp_data.tp_second_part} of position is closed',
                         extra=strategy.extra_log
@@ -212,8 +218,7 @@ def orders_handler(data: dict) -> None:
                         extra=strategy.extra_log
                     )
                     position.sl_tp_data['third_part_closed'] = True
-                    position.trade_ids.append(data.tradeId)
-                    position.save(update_fields=['sl_tp_data', 'trade_ids'])
+                    position.save(update_fields=['sl_tp_data'])
                     logger.info(
                         f'Third part sz={sl_tp_data.tp_third_part} of position is closed',
                         extra=strategy.extra_log
@@ -226,8 +231,7 @@ def orders_handler(data: dict) -> None:
                         extra=strategy.extra_log
                     )
                     position.sl_tp_data['fourth_part_closed'] = True
-                    position.trade_ids.append(data.tradeId)
-                    position.save(update_fields=['sl_tp_data', 'trade_ids'])
+                    position.save(update_fields=['sl_tp_data'])
                     logger.info(
                         f'Fourth part sz={sl_tp_data.tp_fourth_part} of position is closed',
                         extra=strategy.extra_log
@@ -243,16 +247,12 @@ def orders_handler(data: dict) -> None:
                     f'Stop loss market order {data.algoId} is filled, tradeId={data.tradeId}',
                     extra=strategy.extra_log
                 )
-                position.trade_ids.append(data.tradeId)
-                position.save(update_fields=['trade_ids'])
             if sl_tp_data.stop_loss_breakeven_order_id == data.algoId:
                 logger.warning(
                     f'Stop loss breakeven market order {data.algoId} is filled, '
                     f'tradeId={data.tradeId}',
                     extra=strategy.extra_log
                 )
-                position.trade_ids.append(data.tradeId)
-                position.save(update_fields=['trade_ids'])
     except Exception as e:
         logger.exception(e)
         raise e
@@ -318,7 +318,7 @@ def closing_emulate_position_by_limit(
         strategy = Strategy.objects.cache(id=strategy_id)[0]
         strategy._extra_log.update(symbol=symbol)
         with TaskLock(f'closing_emulate_position_by_limit_{strategy_id}_{symbol}'):
-            position = strategy.get_last_emulate_open_position(symbol)
+            position = strategy.get_last_open_emulate_position(symbol)
             if position and any(position.sl_tp_data.values()):
                 strategy = position.strategy
                 strategy._extra_log.update(position=position.id)
@@ -541,7 +541,7 @@ def closing_emulate_position_market_stop_loss(
         strategy = Strategy.objects.cache(id=strategy_id)[0]
         strategy._extra_log.update(symbol=symbol)
         with TaskLock(f'closing_emulate_position_market_stop_loss_{strategy_id}_{symbol}'):
-            position = strategy.get_last_emulate_open_position(symbol)
+            position = strategy.get_last_open_emulate_position(symbol)
             if position and any(position.sl_tp_data.values()):
                 strategy = position.strategy
                 strategy._extra_log.update(position=position.id)
@@ -599,7 +599,7 @@ def closing_emulate_position_market_take_profit(
         strategy = Strategy.objects.cache(id=strategy_id)[0]
         strategy._extra_log.update(symbol=symbol)
         with TaskLock(f'closing_emulate_position_market_take_profit_{strategy_id}_{symbol}'):
-            position = strategy.get_last_emulate_open_position(symbol)
+            position = strategy.get_last_open_emulate_position(symbol)
             if position and any(position.sl_tp_data.values()):
                 strategy = position.strategy
                 strategy._extra_log.update(position=position.id)
@@ -641,7 +641,7 @@ def closing_emulate_position_market_parts(
         strategy = Strategy.objects.cache(id=strategy_id)[0]
         strategy._extra_log.update(symbol=symbol)
         with TaskLock(f'closing_emulate_position_market_parts_{strategy_id}_{symbol}'):
-            position = strategy.get_last_emulate_open_position(symbol)
+            position = strategy.get_last_open_emulate_position(symbol)
             if position and any(position.sl_tp_data.values()):
                 strategy = position.strategy
                 strategy._extra_log.update(position=position.id)
@@ -721,7 +721,7 @@ def closing_trade_position_market_parts(
         strategy = Strategy.objects.cache(id=strategy_id)[0]
         strategy._extra_log.update(symbol=symbol)
         with TaskLock(f'closing_trade_position_market_parts_{strategy_id}_{symbol}'):
-            position = strategy.get_last_trade_open_position(symbol)
+            position = strategy.get_last_open_trade_position(symbol)
             if position and any(position.sl_tp_data.values()):
                 sl_tp_data = Namespace(**position.sl_tp_data)
                 strategy = position.strategy

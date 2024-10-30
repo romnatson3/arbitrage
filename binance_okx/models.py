@@ -89,7 +89,7 @@ class Account(BaseModel):
     created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='accounts', help_text='Created by')
 
     def __str__(self):
-        return f'{self.exchange} - {self.name}'
+        return f'{self.name}'
 
 
 class BinanceSymbol(BaseModel):
@@ -316,15 +316,35 @@ class Strategy(BaseModel):
             position=None
         )
 
-    def get_last_trade_open_position(self, symbol: str) -> QuerySet:
-        return self.positions.filter(
-            mode=Strategy.Mode.trade, is_open=True, symbol__symbol=symbol
-        ).order_by('-id').first()
+    def get_last_open_trade_position(self, symbol: str) -> QuerySet:
+        positions = sorted(
+            filter(
+                lambda x: (
+                    x.symbol.symbol == symbol and
+                    x.is_open is True and
+                    x.mode == Strategy.Mode.trade
+                ),
+                self.positions.all()
+            ),
+            key=lambda x: x.id,
+            reverse=True
+        )
+        return positions[0] if positions else None
 
-    def get_last_emulate_open_position(self, symbol: str) -> QuerySet:
-        return self.positions.filter(
-            mode=Strategy.Mode.emulate, is_open=True, symbol__symbol=symbol
-        ).order_by('-id').first()
+    def get_last_open_emulate_position(self, symbol: str) -> QuerySet:
+        positions = sorted(
+            filter(
+                lambda x: (
+                    x.symbol.symbol == symbol and
+                    x.is_open is True and
+                    x.mode == Strategy.Mode.emulate
+                ),
+                self.positions.all()
+            ),
+            key=lambda x: x.id,
+            reverse=True
+        )
+        return positions[0] if positions else None
 
     @property
     def open_fee(self) -> float:
@@ -450,6 +470,21 @@ class Bill(BaseModel):
 
     def __str__(self):
         return str(self.bill_id)
+
+
+class Order(BaseModel):
+    class Meta:
+        verbose_name = 'Order'
+        verbose_name_plural = 'Orders'
+        indexes = [
+            models.Index(models.F('order_id'), name='order_order_id_idx'),
+            models.Index(models.F('trade_id'), name='order_trade_id_idx')
+        ]
+
+    order_id = models.CharField('Order ID', max_length=255)
+    trade_id = models.CharField('Trade ID', max_length=255, null=True)
+    account = models.ForeignKey('Account', on_delete=models.CASCADE, related_name='orders')
+    data = models.JSONField('Data', default=dict)
 
 
 class PositionManager(models.Manager):

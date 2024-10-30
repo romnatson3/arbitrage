@@ -16,14 +16,16 @@ from django.conf import settings
 from io import StringIO
 from .forms import CustomUserCreationForm, CustomUserChangeForm
 from .models import (
-    StatusLog, Account, OkxSymbol, BinanceSymbol, Strategy, Symbol, Position, Execution, Bill
+    StatusLog, Account, OkxSymbol, BinanceSymbol, Strategy, Symbol, Position,
+    Execution, Bill, Order
 )
 from .misc import get_pretty_dict, get_pretty_text, sort_data, fetch_trade_executions
 from .helper import calc
 from .forms import StrategyForm
 from .filters import (
     PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter,
-    BillInstrumentFilter, BillSubTypeFilter
+    BillInstrumentFilter, BillSubTypeFilter, OrderInstrumentFilter,
+    OrderTypeFilter, OrderStateFilter
 )
 
 
@@ -292,10 +294,6 @@ class StrategyAdmin(admin.ModelAdmin):
         return csv_url + urls
 
     def csv_list(self, request, *args, **kwargs) -> HttpResponse:
-        print(request.GET)
-        print('args', args)
-        print('kwargs', kwargs)
-
         context = {}
         path = pathlib.Path(settings.CSV_PATH)
         csv_files = list(path.glob('*.csv'))
@@ -438,7 +436,7 @@ class PositionAdmin(admin.ModelAdmin):
     readonly_fields = (
         'id', 'updated_at', 'created_at', '_position_data', '_sl_tp_data',
         '_ask_bid_data', '_position_id', '_contract', '_amount',
-        'strategy', 'symbol', 'account', 'mode', 'is_open'
+        'strategy', 'symbol', 'account', 'mode'
     )
     list_filter = ('is_open', 'mode', PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter)
     actions = ['export_csv_action', 'toggle_open_close', 'manual_fill_execution']
@@ -684,7 +682,7 @@ class PositionAdmin(admin.ModelAdmin):
 class BillAdmin(admin.ModelAdmin):
     list_display = (
         'account', 'bill_id', '_symbol', '_order_id', '_trade_id', '_sub_type',
-        '_contract', '_inst_id', '_datetime', 'updated_at'
+        '_contract', '_datetime'
     )
     search_fields = ('bill_id', 'data__ordId', 'data__tradeId')
     list_filter = ('account', BillInstrumentFilter, BillSubTypeFilter)
@@ -714,10 +712,6 @@ class BillAdmin(admin.ModelAdmin):
     def _contract(self, obj) -> str:
         return obj.data.get('sz', '')
 
-    @admin.display(description='Instrument ID')
-    def _inst_id(self, obj) -> str:
-        return obj.data.get('instId', '')
-
     @admin.display(description='Datetime')
     def _datetime(self, obj) -> str:
         return obj.data.get('ts', '')
@@ -738,3 +732,71 @@ class BillAdmin(admin.ModelAdmin):
         else:
             symbol = ''
         return symbol
+
+
+@admin.register(Order)
+class OrderAdmin(admin.ModelAdmin):
+    list_display = (
+        'account', 'order_id', 'trade_id', '_symbol', '_side', '_pos_side',
+        '_order_type', '_state', '_notional', '_sz', '_fill_sz', '_datetime'
+    )
+    search_fields = ('order_id', 'trade_id')
+    list_filter = ('account', OrderInstrumentFilter, OrderTypeFilter, OrderStateFilter)
+    fields = ('account', 'order_id', 'trade_id', '_data', 'created_at', 'updated_at')
+    list_display_links = ('order_id', 'account')
+    ordering = ('-order_id',)
+
+    # def has_delete_permission(self, request, obj=None):
+    #     return False
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return False
+
+    @admin.display(description='Data')
+    def _data(self, obj) -> str:
+        data: dict = sort_data(obj.data, Execution.get_empty_data())
+        return get_pretty_text(data)
+
+    @admin.display(description='Symbol')
+    def _symbol(self, obj) -> str:
+        inst_id = obj.data.get('instId', '')
+        if inst_id:
+            symbol = ''.join(inst_id.split('-')[:-1])
+        else:
+            symbol = ''
+        return symbol
+
+    @admin.display(description='Side')
+    def _side(self, obj) -> str:
+        return obj.data.get('side', '')
+
+    @admin.display(description='Position side')
+    def _pos_side(self, obj) -> str:
+        return obj.data.get('posSide', '')
+
+    @admin.display(description='Order type')
+    def _order_type(self, obj) -> str:
+        return obj.data.get('ordType', '')
+
+    @admin.display(description='State')
+    def _state(self, obj) -> str:
+        return obj.data.get('state', '')
+
+    @admin.display(description='Notional')
+    def _notional(self, obj) -> str:
+        return obj.data.get('notionalUsd', '')
+
+    @admin.display(description='Sz')
+    def _sz(self, obj) -> str:
+        return obj.data.get('sz', '')
+
+    @admin.display(description='Fill sz')
+    def _fill_sz(self, obj) -> str:
+        return obj.data.get('fillSz', '')
+
+    @admin.display(description='Datetime', ordering='data__cTime')
+    def _datetime(self, obj) -> str:
+        return obj.data.get('cTime', '')

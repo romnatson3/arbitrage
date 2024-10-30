@@ -148,7 +148,7 @@ services:
 
   check_condition:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 50 -l INFO -Q check_condition
+    entrypoint: celery -A exchange worker -c 100 -l INFO -Q check_condition
     deploy:
       mode: replicated
       replicas: 1
