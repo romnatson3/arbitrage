@@ -1,11 +1,11 @@
 import logging
 import random
-import time
+from time import monotonic, time
 from decimal import Decimal, ROUND_DOWN
 from types import SimpleNamespace as Namespace
 import okx.Trade as Trade
 import okx.Account as Account
-from .models import Strategy, Symbol, OkxSymbol, Execution, Position
+from .models import Strategy, Symbol, OkxSymbol, Position, Bill
 from .exceptions import (
     PlaceOrderException, GetPositionException, GetOrderException,
     CancelOrderException, ClosePositionException
@@ -416,12 +416,12 @@ class OkxEmulateTrade():
             f'at {date_time}, avgPx={position_data["avgPx"]}',
             extra=self.strategy.extra_log
         )
-        self.create_open_execution(position, date_time)
+        self.create_open_bill(position, date_time)
         return position
 
-    def create_open_execution(self, position: Position, date_time: str) -> None:
-        execution_data = Execution.get_empty_data()
-        execution_data.update(
+    def create_open_bill(self, position: Position, date_time: str) -> None:
+        data = Bill.get_empty_data()
+        data.update(
             subType='Open long' if position.side == 'long' else 'Open short',
             sz=position.sz,
             px=position.position_data['avgPx'],
@@ -429,16 +429,19 @@ class OkxEmulateTrade():
             fee=round(position.size_usdt * self.strategy.open_fee / 100, 10),
             pnl=None
         )
-        Execution.objects.create(
-            position=position,
-            trade_id=str(random.randint(500000000, 999999999)),
-            bill_id=str(int(time.time() * 10000000)),
-            data=execution_data
+        bill = Bill.objects.create(
+            trade_id=int(monotonic() * 1000),
+            bill_id=int(time() * 10000000),
+            order_id=int(time() * 10000000),
+            data=data,
+            symbol=self.symbol,
+            account=self.strategy.second_account,
+            mode=Strategy.Mode.emulate
         )
+        position.add_trade_id(bill.trade_id)
         logger.info(
-            f'Created virtual {execution_data["subType"]} execution, '
-            f'sz={execution_data["sz"]}, px={execution_data["px"]}, '
-            f'fee={execution_data["fee"]}',
+            f'Created virtual {data["subType"]} {bill.trade_id=}, '
+            f'sz={data["sz"]}, px={data["px"]}, fee={data["fee"]}',
             extra=self.strategy.extra_log
         )
 
@@ -471,17 +474,18 @@ class OkxEmulateTrade():
                 f'{close_price=} {size_contract=}, {size_usdt=} at {date_time}',
                 extra=self.strategy.extra_log
             )
+        position.position_data['uTime'] = date_time
         position.save(update_fields=['is_open', 'sl_tp_data', 'position_data'])
-        self.create_close_execution(
+        self.create_close_bill(
             position, close_price, size_contract, size_usdt, date_time
         )
 
-    def create_close_execution(
+    def create_close_bill(
         self, position: Position, close_price: float, size_contract: float,
         size_usdt: float, date_time: str
     ) -> None:
         sub_type = 'Open long' if position.side == 'long' else 'Open short'
-        open_execution = position.executions.filter(data__subType=sub_type).first()
+        open_bill = position.bills.filter(data__subType=sub_type).first()
         tp_first_part_percent = self.strategy.tp_first_part_percent
         tp_second_part_percent = 100 - tp_first_part_percent
         sl_tp_data = Namespace(**position.sl_tp_data)
@@ -489,20 +493,20 @@ class OkxEmulateTrade():
             (position.sz == size_contract and sl_tp_data.first_part_closed) or
             sl_tp_data.second_part_closed
         ):
-            open_fee = round(open_execution.data['fee'] * tp_second_part_percent / 100, 10)
+            open_fee = round(open_bill.data['fee'] * tp_second_part_percent / 100, 10)
         elif sl_tp_data.first_part_closed and not sl_tp_data.second_part_closed:
-            open_fee = round(open_execution.data['fee'] * tp_first_part_percent / 100, 10)
+            open_fee = round(open_bill.data['fee'] * tp_first_part_percent / 100, 10)
         else:
-            open_fee = open_execution.data['fee']
-        open_price = open_execution.data['px']
+            open_fee = open_bill.data['fee']
+        open_price = open_bill.data['px']
         base_coin = calc.get_base_coin_from_sz(size_contract, self.symbol.okx.ct_val)
         close_fee = round(size_usdt * self.strategy.close_fee / 100, 10)
         if position.side == 'long':
             pnl = round((close_price - open_price) * base_coin - (open_fee + close_fee), 10)
         elif position.side == 'short':
             pnl = round((open_price - close_price) * base_coin - (open_fee + close_fee), 10)
-        execution_data = Execution.get_empty_data()
-        execution_data.update(
+        data = Bill.get_empty_data()
+        data.update(
             subType='Close long' if position.side == 'long' else 'Close short',
             sz=size_contract,
             px=close_price,
@@ -510,16 +514,20 @@ class OkxEmulateTrade():
             fee=close_fee,
             pnl=pnl
         )
-        Execution.objects.create(
-            position=position,
-            trade_id=str(random.randint(500000000, 999999999)),
-            bill_id=str(int(time.time() * 10000000)),
-            data=execution_data
+        bill = Bill.objects.create(
+            trade_id=int(monotonic() * 1000),
+            bill_id=int(time() * 10000000),
+            order_id=int(time() * 10000000),
+            data=data,
+            symbol=self.symbol,
+            account=self.strategy.second_account,
+            mode=Strategy.Mode.emulate
         )
+        position.add_trade_id(bill.trade_id)
         logger.info(
-            f'Created virtual {execution_data["subType"]} execution, '
-            f'sz={execution_data["sz"]}, px={execution_data["px"]}, '
-            f'fee={execution_data["fee"]}, pnl={execution_data["pnl"]}',
+            f'Created virtual {data["subType"]} {bill.trade_id=}, '
+            f'sz={data["sz"]}, px={data["px"]}, '
+            f'fee={data["fee"]}, pnl={data["pnl"]}',
             extra=self.strategy.extra_log
         )
 

@@ -17,10 +17,9 @@ from io import StringIO
 from .forms import CustomUserCreationForm, CustomUserChangeForm
 from .models import (
     StatusLog, Account, OkxSymbol, BinanceSymbol, Strategy, Symbol, Position,
-    Execution, Bill, Order
+    Bill, Order
 )
-from .misc import get_pretty_dict, get_pretty_text, sort_data, fetch_trade_executions
-from .helper import calc
+from .misc import get_pretty_dict, get_pretty_text, sort_data
 from .forms import StrategyForm
 from .filters import (
     PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter,
@@ -326,121 +325,40 @@ class StrategyAdmin(admin.ModelAdmin):
         return render(request, 'admin/csv_list.html', context)
 
 
-class ExecutionAdminMixin():
-    @admin.display(description='Data')
-    def _data(self, obj) -> str:
-        data: dict = sort_data(obj.data, Execution.get_empty_data())
-        return get_pretty_text(data)
-
-    @admin.display(description='Type')
-    def _type(self, obj) -> str:
-        return obj.data.get('subType', '')
-
-    @admin.display(description='Contract size')
-    def _contract(self, obj) -> str:
-        return obj.data.get('sz', '')
-
-    @admin.display(description='USDT amount')
-    def _amount(self, obj) -> str:
-        base_coin = calc.get_base_coin_from_sz(
-            obj.data['sz'], obj.position.symbol.okx.ct_val
-        )
-        usdt = base_coin * obj.data['px']
-        return round(usdt, 2)
-
-    @admin.display(description='Px')
-    def _px(self, obj) -> str:
-        return obj.data.get('px', '')
-
-    @admin.display(description='PnL')
-    def _pnl(self, obj) -> str:
-        return obj.data.get('pnl', '')
-
-    @admin.display(description='Symbol')
-    def _symbol(self, obj) -> str:
-        inst_id = obj.data.get('instId', '')
-        if inst_id:
-            symbol = ''.join(inst_id.split('-')[:-1])
-        else:
-            symbol = ''
-        return symbol
-
-
-@admin.register(Execution)
-class ExecutionAdmin(ExecutionAdminMixin, admin.ModelAdmin):
-    list_display = (
-        'position', '_type', '_symbol', '_contract', '_amount', '_px', '_pnl',
-        'bill_id', 'trade_id', 'created_at'
-    )
-    fields = (
-        'id', 'position', 'bill_id', 'trade_id', '_data', 'updated_at', 'created_at'
-    )
-    list_display_links = ('position',)
-    search_fields = ('position__id',)
-    list_filter = (
-        'position__strategy', 'position__mode', 'position__is_open', 'position__id'
-    )
-    ordering = ('-position', '-bill_id')
-
-    def get_queryset(self, request) -> QuerySet:
-        qs = super().get_queryset(request)
-        if request.user.is_superuser:
-            return qs
-        return qs.filter(position__strategy__created_by=request.user)
-
-    # def has_delete_permission(self, request, obj=None):
-    #     return False
-
-    def has_add_permission(self, request):
-        return False
-
-    def has_change_permission(self, request, obj=None):
-        return False
-
-
-class ExecutionInline(ExecutionAdminMixin, admin.TabularInline):
-    model = Execution
-    fields = (
-        '_type', '_symbol', '_contract', '_amount', '_px', '_pnl',
-        'bill_id', 'trade_id', 'created_at'
-    )
-    readonly_fields = (
-        '_type', '_symbol', '_contract', '_amount', '_px', '_pnl',
-        'bill_id', 'trade_id', 'created_at'
-    )
-    extra = 0
-    ordering = ('-data__subType',)
-
-    def has_delete_permission(self, request, obj=None):
-        return False
-
-    def has_add_permission(self, request, obj=None):
-        return False
-
-    def has_change_permission(self, request, obj=None):
-        return False
-
-
 @admin.register(Position)
 class PositionAdmin(admin.ModelAdmin):
     list_display = (
-        'id', 'is_open', 'strategy', '_position_side', 'mode', 'symbol', '_position_id',
-        '_trade_ids', '_contract', '_amount', '_duration', 'updated_at'
+        'id', 'is_open', 'strategy', '_position_side', 'mode', 'symbol',
+        '_trade_ids', '_pos', '_amount', '_duration', 'updated_at'
     )
-    fields = (
-        'id', 'is_open', 'strategy', 'symbol', 'mode', 'account', 'trade_ids', '_position_data',
-        '_sl_tp_data', '_ask_bid_data', 'updated_at', 'created_at'
+    fieldsets = (
+        (None, {'fields': ('id', 'is_open', 'strategy', 'symbol', 'mode', 'account')}),
+        (None, {'fields': ('trade_ids',)}),
+        (None, {'fields': ('updated_at', 'created_at')}),
+        (
+            'Data',
+            {
+                'fields': (
+                    ('_position_data', '_sl_tp_data', '_ask_bid_data'),
+                )
+            }
+        ),
+        ('Bills', {'fields': ('_bills',)})
     )
-    search_fields = ('strategy__name', 'symbol__symbol')
+    search_fields = ('strategy__name', 'symbol__symbol', 'trade_ids')
     list_display_links = ('id', 'strategy')
     readonly_fields = (
         'id', 'updated_at', 'created_at', '_position_data', '_sl_tp_data',
-        '_ask_bid_data', '_position_id', '_contract', '_amount',
-        'strategy', 'symbol', 'account', 'mode'
+        '_ask_bid_data', '_pos', '_amount', 'strategy', 'symbol', 'account',
+        'mode', '_bills'
     )
-    list_filter = ('is_open', 'mode', PositionSideFilter, PositionStrategyFilter, PositionSymbolFilter)
-    actions = ['export_csv_action', 'toggle_open_close', 'manual_fill_execution']
-    inlines = [ExecutionInline]
+    list_filter = (
+        'is_open', 'mode', PositionSideFilter, PositionStrategyFilter,
+        PositionSymbolFilter
+    )
+    actions = ['export_csv_action', 'toggle_open_close']
+    list_per_page = 500
+    ordering = ('-id',)
 
     class Media:
         css = {
@@ -449,9 +367,16 @@ class PositionAdmin(admin.ModelAdmin):
 
     def get_queryset(self, request) -> QuerySet:
         qs = super().get_queryset(request)
-        if request.user.is_superuser:
-            return qs.prefetch_related('executions')
-        return qs.prefetch_related('executions').filter(strategy__created_by=request.user)
+        return qs.order_by('id')
+
+    def get_form(self, request, obj=None, **kwargs):
+        form = super().get_form(request, obj, **kwargs)
+        form.base_fields['trade_ids'].widget.attrs.update({
+            'rows': 2,
+            'cols': 100,
+            # 'style': 'width: 500px; height: 100px;'
+        })
+        return form
 
     # def has_delete_permission(self, request, obj=None):
     #     return False
@@ -461,6 +386,44 @@ class PositionAdmin(admin.ModelAdmin):
 
     # def has_change_permission(self, request, obj=None):
     #     return False
+
+    @admin.display(description='Bills')
+    def _bills(self, obj) -> str:
+        from django.utils.safestring import mark_safe
+        rows = [
+            '<table class="bills">',
+            '<tr>',
+            '<th>Bill ID</th>',
+            '<th>Trade ID</th>',
+            '<th>Order ID</th>',
+            '<th>Symbol</th>',
+            '<th>Mode</th>',
+            '<th>Sub type</th>',
+            '<th>Price</th>',
+            '<th>Size</th>',
+            '<th>Amount</th>',
+            '<th>PnL</th>',
+            '<th>Datetime</th>',
+            '</tr>'
+        ]
+        for bill in obj.bills:
+            rows.append(
+                '<tr>'
+                f'<td>{bill.bill_id}</td>'
+                f'<td>{bill.trade_id}</td>'
+                f'<td>{bill.order_id}</td>'
+                f'<td>{bill.symbol}</td>'
+                f'<td>{bill.mode}</td>'
+                f'<td>{bill.data["subType"]}</td>'
+                f'<td>{bill.data["px"]}</td>'
+                f'<td>{bill.data["sz"]}</td>'
+                f'<td>{bill.amount_usdt}</td>'
+                f'<td>{bill.data["pnl"]}</td>'
+                f'<td>{bill.data["ts"]}</td>'
+                '</tr>'
+            )
+        rows.append('</table>')
+        return mark_safe(''.join(rows))
 
     @admin.display(description='Position data')
     def _position_data(self, obj) -> str:
@@ -477,18 +440,14 @@ class PositionAdmin(admin.ModelAdmin):
         data: dict = sort_data(obj.ask_bid_data, Position.get_ask_bid_empty_data())
         return get_pretty_text(data)
 
-    @admin.display(description='Position ID')
-    def _position_id(self, obj) -> str:
-        return obj.position_data.get('posId', '')
-
     @admin.display(description='Trade IDs')
     def _trade_ids(self, obj) -> str:
         if not obj.trade_ids:
             return ''
         return ', '.join(map(lambda x: str(x), obj.trade_ids))
 
-    @admin.display(description='Contract size')
-    def _contract(self, obj) -> str:
+    @admin.display(description='Position size')
+    def _pos(self, obj) -> str:
         pos = obj.position_data.get('pos')
         if pos:
             return round(float(pos), 2)
@@ -508,16 +467,15 @@ class PositionAdmin(admin.ModelAdmin):
     @admin.display(description='Duration, s')
     def _duration(self, obj) -> int:
         duration = 0
-        open_time = timezone.datetime.strptime(obj.position_data['cTime'], '%d-%m-%Y %H:%M:%S.%f')
+        open_time = timezone.datetime.strptime(
+            obj.position_data['cTime'], '%d-%m-%Y %H:%M:%S.%f')
         if obj.is_open:
             open_time = open_time.astimezone(timezone.get_current_timezone())
             duration = (timezone.localtime() - open_time).total_seconds()
         else:
-            executions = list(obj.executions.all())
-            if executions:
-                executions.sort(key=lambda x: x.bill_id)
-                last_execution = executions[-1]
-                close_time = timezone.datetime.strptime(last_execution.data['ts'], '%d-%m-%Y %H:%M:%S.%f')
+            if obj.position_data['uTime']:
+                close_time = timezone.datetime.strptime(
+                    obj.position_data['uTime'], '%d-%m-%Y %H:%M:%S.%f')
                 duration = (close_time - open_time).total_seconds()
         return f'{duration:.3f}'
 
@@ -528,23 +486,13 @@ class PositionAdmin(admin.ModelAdmin):
             position.save()
         self.message_user(request, f'Positions toggled: {queryset.count()}')
 
-    @admin.action(description='Pull execution data manually')
-    def manual_fill_execution(self, request, queryset):
-        count = fetch_trade_executions(queryset)
-        if count > 0:
-            self.message_user(
-                request,
-                f'Updated {count} positions',
-                level='SUCCESS'
-            )
-
     @admin.action(description='Export CSV')
     def export_csv_action(self, request, queryset):
-        fetch_trade_executions(queryset)
         f = StringIO()
         writer = csv.writer(f, delimiter=';')
         headers = [
-            'ІД Позиції', 'Монета', 'Дата', 'Чаc', 'Тип (trade/emulate)', 'Позиція (шорт/лонг)', 'Тип (open/close)',
+            'ІД Позиції', 'Монета', 'Дата', 'Чаc', 'Тип (trade/emulate)',
+            'Позиція (шорт/лонг)', 'Тип (open/close)',
             'Аск_1 біржа№1 (парсинг)', 'Аск_2 біржа№1 (парсинг)',
             'Бід_1 біржа№1 (парсинг)', 'Бід_2 біржа№1 (парсинг)',
             'Аск_1 біржа№2 (парсинг)', 'Аск_2 біржа№2 (парсинг)',
@@ -560,184 +508,123 @@ class PositionAdmin(admin.ModelAdmin):
             'Комісія', 'Прибуток'
         ]
         writer.writerow(headers)
-        executions = (
-            Execution.objects.filter(position__in=queryset)
-            .order_by('position__id', 'bill_id').all()
-            # .order_by('position__id', '-data__subType', 'data__ts').all()
-        )
-        for execution in executions:
-            ask_bid_data = Namespace(**execution.position.ask_bid_data)
-            data = Namespace(**execution.data)
-            position_data = Namespace(**execution.position.position_data)
-            duration = round((
-                timezone.datetime.strptime(data.ts, '%d-%m-%Y %H:%M:%S.%f') -
-                timezone.datetime.strptime(position_data.cTime, '%d-%m-%Y %H:%M:%S.%f')
-            ).total_seconds() * 1000)
-            is_open = 'open' in data.subType.lower()
-            base_coin = calc.get_base_coin_from_sz(data.sz, execution.position.symbol.okx.ct_val)
-            usdt = round(base_coin * data.px, 2)
-            if is_open:
-                row = [
-                    execution.position.id,
-                    execution.position.symbol.symbol,
-                    ask_bid_data.date_time_last_prices.split(' ')[0],
-                    ask_bid_data.date_time_last_prices.split(' ')[1],
-                    execution.position.mode,
-                    position_data.posSide,
-                    data.subType,
-                    ask_bid_data.binance_previous_ask,
-                    ask_bid_data.binance_last_ask,
-                    ask_bid_data.binance_previous_bid,
-                    ask_bid_data.binance_last_bid,
-                    ask_bid_data.okx_previous_ask,
-                    ask_bid_data.okx_last_ask,
-                    ask_bid_data.okx_previous_bid,
-                    ask_bid_data.okx_last_bid,
-                    ask_bid_data.delta_points,
-                    ask_bid_data.delta_percent,
-                    ask_bid_data.target_delta,
-                    ask_bid_data.spread_points,
-                    ask_bid_data.spread_percent,
-                    ask_bid_data.binance_last_ask_entry,
-                    ask_bid_data.binance_last_bid_entry,
-                    ask_bid_data.okx_last_ask_entry,
-                    ask_bid_data.okx_last_bid_entry,
-                    ask_bid_data.delta_points_entry,
-                    ask_bid_data.delta_percent_entry,
-                    ask_bid_data.spread_points_entry,
-                    ask_bid_data.spread_percent_entry,
-                    usdt,
-                    position_data.cTime.split(' ')[0],
-                    position_data.cTime.split(' ')[1],
-                    data.px,
-                    None if is_open else data.ts.split(' ')[1],
-                    None if is_open else duration,
-                    data.fee,
-                    None if is_open else f'{data.pnl:.5f}'
-                ]
-            else:
-                row = [
-                    execution.position.id,
-                    execution.position.symbol.symbol,
-                    '',
-                    '',
-                    execution.position.mode,
-                    position_data.posSide,
-                    data.subType,
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    '',
-                    usdt,
-                    '',
-                    '',
-                    data.px,
-                    '' if is_open else data.ts.split(' ')[1],
-                    '' if is_open else duration,
-                    data.fee,
-                    '' if is_open else f'{data.pnl:.5f}'
-                ]
-            d = dict(zip(headers, row))
-            for i, j in d.items():
-                if isinstance(j, float):
-                    if i in ['Дельта в пунктах (парсинг)', 'Спред біржа №2 в пунктах (парсинг)',
-                             'Дельта в пунктах (вхід)', 'Спред біржа №2 в пунктах (вхід)']:
-                        d[i] = f'{j:.2f}'.replace('.', ',')
-                    elif i in ['Дельта в % (парсинг)', 'Дельта цільова в %',
-                               'Спред біржа №2 в % (парсинг)', 'Дельта в % (вхід)',
-                               'Спред біржа №2 в % (вхід)']:
-                        d[i] = f'{j:.5f}'.replace('.', ',')
-                    elif i in ['Комісія']:
-                        d[i] = f'{j:.8f}'.replace('.', ',')
-                    else:
-                        d[i] = str(j).replace('.', ',')
-                if isinstance(j, str):
-                    if i in ['Прибуток']:
-                        d[i] = f'{j}'.replace('.', ',')
-            writer.writerow(d.values())
+        for position in queryset.order_by('id'):
+            for bill in position.bills:
+                bill_data = Namespace(**bill.data)
+                ask_bid_data = Namespace(**bill.position['ask_bid'])
+                position_data = Namespace(**bill.position['data'])
+                duration = round((
+                    timezone.datetime.strptime(bill_data.ts, '%d-%m-%Y %H:%M:%S.%f') -
+                    timezone.datetime.strptime(position_data.cTime, '%d-%m-%Y %H:%M:%S.%f')
+                ).total_seconds() * 1000)
+                is_open = 'open' in bill_data.subType.lower()
+                usdt = bill.amount_usdt
+                if is_open:
+                    row = [
+                        bill.position['id'],
+                        bill.symbol.symbol,
+                        ask_bid_data.date_time_last_prices.split(' ')[0],
+                        ask_bid_data.date_time_last_prices.split(' ')[1],
+                        bill.mode,
+                        position_data.posSide,
+                        bill_data.subType,
+                        ask_bid_data.binance_previous_ask,
+                        ask_bid_data.binance_last_ask,
+                        ask_bid_data.binance_previous_bid,
+                        ask_bid_data.binance_last_bid,
+                        ask_bid_data.okx_previous_ask,
+                        ask_bid_data.okx_last_ask,
+                        ask_bid_data.okx_previous_bid,
+                        ask_bid_data.okx_last_bid,
+                        ask_bid_data.delta_points,
+                        ask_bid_data.delta_percent,
+                        ask_bid_data.target_delta,
+                        ask_bid_data.spread_points,
+                        ask_bid_data.spread_percent,
+                        ask_bid_data.binance_last_ask_entry,
+                        ask_bid_data.binance_last_bid_entry,
+                        ask_bid_data.okx_last_ask_entry,
+                        ask_bid_data.okx_last_bid_entry,
+                        ask_bid_data.delta_points_entry,
+                        ask_bid_data.delta_percent_entry,
+                        ask_bid_data.spread_points_entry,
+                        ask_bid_data.spread_percent_entry,
+                        usdt,
+                        position_data.cTime.split(' ')[0],
+                        position_data.cTime.split(' ')[1],
+                        bill_data.px,
+                        None if is_open else bill_data.ts.split(' ')[1],
+                        None if is_open else duration,
+                        bill_data.fee,
+                        None if is_open else f'{bill_data.pnl:.5f}'
+                    ]
+                else:
+                    row = [
+                        bill.position['id'],
+                        bill.symbol.symbol,
+                        '',
+                        '',
+                        bill.mode,
+                        position_data.posSide,
+                        bill_data.subType,
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        '',
+                        usdt,
+                        '',
+                        '',
+                        bill_data.px,
+                        '' if is_open else bill_data.ts.split(' ')[1],
+                        '' if is_open else duration,
+                        bill_data.fee,
+                        '' if is_open else f'{bill_data.pnl:.5f}'
+                    ]
+                d = dict(zip(headers, row))
+                for i, j in d.items():
+                    if isinstance(j, float):
+                        if i in ['Дельта в пунктах (парсинг)', 'Спред біржа №2 в пунктах (парсинг)',
+                                 'Дельта в пунктах (вхід)', 'Спред біржа №2 в пунктах (вхід)']:
+                            d[i] = f'{j:.2f}'.replace('.', ',')
+                        elif i in ['Дельта в % (парсинг)', 'Дельта цільова в %',
+                                   'Спред біржа №2 в % (парсинг)', 'Дельта в % (вхід)',
+                                   'Спред біржа №2 в % (вхід)']:
+                            d[i] = f'{j:.5f}'.replace('.', ',')
+                        elif i in ['Комісія']:
+                            d[i] = f'{j:.8f}'.replace('.', ',')
+                        else:
+                            d[i] = str(j).replace('.', ',')
+                    if isinstance(j, str):
+                        if i in ['Прибуток']:
+                            d[i] = f'{j}'.replace('.', ',')
+                writer.writerow(d.values())
         f.seek(0)
         response = HttpResponse(f.read(), content_type='text/csv', charset='utf-8-sig')
         response['Content-Disposition'] = 'attachment; filename="positions.csv"'
         return response
 
 
-@admin.register(Bill)
-class BillAdmin(admin.ModelAdmin):
-    list_display = (
-        'account', 'bill_id', '_symbol', '_order_id', '_trade_id', '_sub_type',
-        '_contract', '_datetime'
-    )
-    search_fields = ('bill_id', 'data__ordId', 'data__tradeId')
-    list_filter = ('account', BillInstrumentFilter, BillSubTypeFilter)
-    fields = ('bill_id', 'account', '_data', 'created_at', 'updated_at')
-    list_display_links = ('bill_id', 'account')
-    ordering = ('-bill_id',)
-
-    # def has_delete_permission(self, request, obj=None):
-    #     return False
-
-    def has_add_permission(self, request):
-        return False
-
-    def has_change_permission(self, request, obj=None):
-        return False
-
-    @admin.display(description='Data')
-    def _data(self, obj) -> str:
-        data: dict = sort_data(obj.data, Execution.get_empty_data())
-        return get_pretty_text(data)
-
-    @admin.display(description='Sub type')
-    def _sub_type(self, obj) -> str:
-        return obj.data.get('subType', '')
-
-    @admin.display(description='Contract size')
-    def _contract(self, obj) -> str:
-        return obj.data.get('sz', '')
-
-    @admin.display(description='Datetime')
-    def _datetime(self, obj) -> str:
-        return obj.data.get('ts', '')
-
-    @admin.display(description='Order ID')
-    def _order_id(self, obj) -> str:
-        return obj.data.get('ordId', '')
-
-    @admin.display(description='Trade ID')
-    def _trade_id(self, obj) -> str:
-        return obj.data.get('tradeId', '')
-
-    @admin.display(description='Symbol')
-    def _symbol(self, obj) -> str:
-        inst_id = obj.data.get('instId', '')
-        if inst_id:
-            symbol = ''.join(inst_id.split('-')[:-1])
-        else:
-            symbol = ''
-        return symbol
-
-
 @admin.register(Order)
 class OrderAdmin(admin.ModelAdmin):
     list_display = (
-        'account', 'order_id', 'trade_id', '_symbol', '_side', '_pos_side',
+        'account', 'order_id', 'trade_id', 'symbol', '_side', '_pos_side',
         '_order_type', '_state', '_notional', '_sz', '_fill_sz', '_datetime'
     )
     search_fields = ('order_id', 'trade_id')
@@ -745,6 +632,7 @@ class OrderAdmin(admin.ModelAdmin):
     fields = ('account', 'order_id', 'trade_id', '_data', 'created_at', 'updated_at')
     list_display_links = ('order_id', 'account')
     ordering = ('-order_id',)
+    list_per_page = 500
 
     # def has_delete_permission(self, request, obj=None):
     #     return False
@@ -757,17 +645,7 @@ class OrderAdmin(admin.ModelAdmin):
 
     @admin.display(description='Data')
     def _data(self, obj) -> str:
-        data: dict = sort_data(obj.data, Execution.get_empty_data())
-        return get_pretty_text(data)
-
-    @admin.display(description='Symbol')
-    def _symbol(self, obj) -> str:
-        inst_id = obj.data.get('instId', '')
-        if inst_id:
-            symbol = ''.join(inst_id.split('-')[:-1])
-        else:
-            symbol = ''
-        return symbol
+        return get_pretty_dict(obj.data)
 
     @admin.display(description='Side')
     def _side(self, obj) -> str:
@@ -800,3 +678,61 @@ class OrderAdmin(admin.ModelAdmin):
     @admin.display(description='Datetime', ordering='data__cTime')
     def _datetime(self, obj) -> str:
         return obj.data.get('cTime', '')
+
+
+@admin.register(Bill)
+class BillAdmin(admin.ModelAdmin):
+    list_display = (
+        'account', 'bill_id', 'order_id', 'trade_id', 'symbol', 'mode', '_sub_type',
+        '_size', '_pnl', '_px', '_amount', '_datetime'
+    )
+    search_fields = ('bill_id', 'trade_id', 'order_id')
+    list_filter = ('account', 'mode', BillInstrumentFilter, BillSubTypeFilter)
+    fields = (
+        'bill_id', 'account', 'order_id', 'trade_id', 'symbol', '_data',
+        'created_at', 'updated_at'
+    )
+    readonly_fields = (
+        'bill_id', 'account', 'symbol', '_data', 'created_at', 'updated_at'
+    )
+    list_display_links = ('bill_id', 'account')
+    ordering = ('-data__ts', '-bill_id')
+    list_per_page = 500
+
+    # def has_delete_permission(self, request, obj=None):
+    #     return False
+
+    def has_add_permission(self, request):
+        return False
+
+    # def has_change_permission(self, request, obj=None):
+    #     return False
+
+    @admin.display(description='Data')
+    def _data(self, obj) -> str:
+        data: dict = sort_data(obj.data, Bill.get_empty_data())
+        return get_pretty_text(data)
+
+    @admin.display(description='Sub type')
+    def _sub_type(self, obj) -> str:
+        return obj.data.get('subType', '')
+
+    @admin.display(description='Size')
+    def _size(self, obj) -> str:
+        return obj.data.get('sz', '')
+
+    @admin.display(description='Datetime', ordering='data__ts')
+    def _datetime(self, obj) -> str:
+        return obj.data.get('ts', '')
+
+    @admin.display(description='Px')
+    def _px(self, obj) -> str:
+        return obj.data.get('px', '')
+
+    @admin.display(description='PnL')
+    def _pnl(self, obj) -> str:
+        return obj.data.get('pnl', '')
+
+    @admin.display(description='USDT amount')
+    def _amount(self, obj) -> str:
+        return obj.amount_usdt

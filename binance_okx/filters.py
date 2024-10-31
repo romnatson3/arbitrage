@@ -10,14 +10,14 @@ class OrderInstrumentFilter(SimpleListFilter):
         return [
             (instrument, instrument)
             for instrument in (
-                Order.objects.values_list('data__instId', flat=True)
-                .order_by('data__instId').distinct()
+                Order.objects.values_list('symbol', flat=True)
+                .order_by('symbol').distinct()
             )
         ]
 
     def queryset(self, request, queryset):
         if self.value():
-            return queryset.filter(data__instId=self.value())
+            return queryset.filter(symbol=self.value())
         return queryset
 
 
@@ -67,14 +67,14 @@ class BillInstrumentFilter(SimpleListFilter):
         return [
             (instrument, instrument)
             for instrument in (
-                Bill.objects.values_list('data__instId', flat=True)
-                .order_by('data__instId').distinct()
+                Bill.objects.values_list('symbol', flat=True)
+                .order_by('symbol').distinct()
             )
         ]
 
     def queryset(self, request, queryset):
         if self.value():
-            return queryset.filter(data__instId=self.value())
+            return queryset.filter(symbol=self.value())
         return queryset
 
 

@@ -14,7 +14,7 @@ from exchange.celery import app
 from .helper import TaskLock, check_all_conditions, convert_dict_values, get_bills
 from .models import (
     Strategy, Symbol, Account, Position, StatusLog, OkxSymbol, BinanceSymbol,
-    Bill, Execution
+    Bill
 )
 from .exceptions import AcquireLockException, ClosePositionException
 from .strategy import (
@@ -152,29 +152,42 @@ def update_bills():
                         .filter(account=account)
                         .values_list('bill_id', flat=True)
                     )
-                    bill_id = None
                     bills = get_bills(account)
-                    if bill_id:
-                        logger.info(
-                            f'Got {len(bills)} new bills from exchange, before {bill_id=}, '
-                            f'for account: {account.name}'
-                        )
-                    else:
-                        logger.debug(
-                            f'{account.name}. Got {len(bills)} last bills from exchange'
-                        )
+                    logger.debug(
+                        f'Got {len(bills)} last bills from exchange',
+                        extra={'position': account.name}
+                    )
                     if not bills:
                         continue
                     new_bills: list[Bill] = [
-                        Bill(bill_id=b['billId'], account=account, data=b)
+                        Bill(
+                            bill_id=b['billId'],
+                            order_id=b['ordId'],
+                            trade_id=b['tradeId'],
+                            account=account,
+                            data=b,
+                            symbol_id=''.join(b['instId'].split('-')[:-1]),
+                            mode=Strategy.Mode.trade
+                        )
                         for b in bills if b['billId'] not in bills_ids
                     ]
                     if new_bills:
                         Bill.objects.bulk_create(new_bills, ignore_conflicts=True)
-                        logger.info(f'{account.name}. Saved {len(new_bills)} bills to db')
-                        logger.info(f'Bill ids: {", ".join([str(b.bill_id) for b in new_bills])}')
+                        for bill in new_bills:
+                            logger.info(
+                                f'Saved bill_id={bill.bill_id}, '
+                                f'trade_id={bill.trade_id}, '
+                                f'subType={bill.data["subType"]}, '
+                                f'sz={bill.data["sz"]}, '
+                                f'px={bill.data["px"]}, '
+                                f'ordId={bill.order_id}',
+                                extra={'symbol': bill.symbol, 'position': account.name}
+                            )
                     else:
-                        logger.debug(f'{account.name}. All bills are already exist in db')
+                        logger.debug(
+                            'All bills are already exist in database',
+                            extra={'position': account.name}
+                        )
                 except Exception as e:
                     logger.exception(e)
                     continue
@@ -207,8 +220,9 @@ def create_or_update_position(data: dict) -> None:
             strategy._extra_log.update(position=position.id)
             if data['pos'] == 0:
                 position.is_open = False
-                position.trade_ids.append(data['tradeId'])
-                position.save(update_fields=['is_open', 'trade_ids'])
+                position.position_data['uTime'] = data['uTime']
+                position.save(update_fields=['is_open', 'position_data'])
+                position.add_trade_id(data['tradeId'])
                 logger.info(
                     f'Position was closed, trade_id={data["tradeId"]}',
                     extra=strategy.extra_log
@@ -216,8 +230,8 @@ def create_or_update_position(data: dict) -> None:
             else:
                 previous_pos = position.position_data['pos']
                 position.position_data = data
-                position.trade_ids.append(data['tradeId'])
-                position.save(update_fields=['position_data', 'trade_ids'])
+                position.save(update_fields=['position_data'])
+                position.add_trade_id(data['tradeId'])
                 logger.info(
                     f'Updated position data in database, avgPx={data["avgPx"]}, '
                     f'sz={data["pos"]}, usdt={data["notionalUsd"]}, '
@@ -249,45 +263,6 @@ def create_or_update_position(data: dict) -> None:
                     extra=strategy.extra_log
                 )
                 return
-        create_execution.apply_async(args=(position.id,), countdown=5)
-    except Exception as e:
-        logger.exception(e)
-        raise e
-
-
-@app.task
-def create_execution(position_id: int) -> None:
-    try:
-        position = Position.objects.get(id=position_id)
-        position.strategy._extra_log.update(
-            symbol=position.symbol.symbol, position=position.id
-        )
-        order_ids = (
-            Bill.objects.filter(data__tradeId__in=position.trade_ids)
-            .values_list('data__ordId', flat=True)
-        )
-        bills = Bill.objects.filter(data__ordId__in=order_ids).all()
-        executions = []
-        for bill in bills:
-            if Execution.objects.filter(bill_id=bill.bill_id, trade_id=bill.data['tradeId']).exists():
-                continue
-            executions.append(
-                Execution(
-                    bill_id=bill.bill_id, trade_id=bill.data['tradeId'],
-                    data=bill.data, position=position
-                )
-            )
-        executions = Execution.objects.bulk_create(executions, ignore_conflicts=True)
-        for execution in executions:
-            logger.info(
-                f'Created execution bill_id={execution.data["billId"]}, '
-                f'trade_id={execution.data["tradeId"]}, '
-                f'subType={execution.data["subType"]}, '
-                f'sz={execution.data["sz"]}, '
-                f'px={execution.data["px"]}, '
-                f'ordId={execution.data["ordId"]}',
-                extra=position.strategy.extra_log
-            )
     except Exception as e:
         logger.exception(e)
         raise e

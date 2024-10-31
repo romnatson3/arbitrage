@@ -1,7 +1,38 @@
-.inline-group .tabular tr.has_original td {
-    padding-top: 8px;
+div.form-row.field-_bills > div > div.flex-container > label {
+    display: none;
 }
 
-.original {
-    display: none;
+.bills {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+}
+
+.bills th {
+    font-weight: bold;
+    padding: 8px;
+    border-right: 1px solid #ddd;
+    border-bottom: 2px solid #ddd;
+    text-align: left;
+}
+
+.bills td {
+    padding: 8px;
+    border-right: 1px solid #ddd;
+    border-bottom: 1px solid #ddd;
+    text-align: left;
+    word-wrap: break-word;
+}
+
+.bills th:last-child,
+.bills td:last-child {
+    border-right: none;
+}
+
+.bills td:last-child {
+    white-space: nowrap;
+}
+
+.bills th:last-child {
+    width: 10%;
 }

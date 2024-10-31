@@ -136,7 +136,8 @@ def orders_handler(data: dict) -> None:
             order_id=data.ordId,
             trade_id=data.tradeId,
             account_id=data.account_id,
-            data=_data
+            data=_data,
+            symbol_id=symbol,
         )
         logger.debug(
             'Save order to database: '
@@ -157,12 +158,7 @@ def orders_handler(data: dict) -> None:
             return
         strategy._extra_log.update(position=position.id)
         if data.tradeId:
-            position.trade_ids.append(data.tradeId)
-            logger.debug(
-                f'Add trade_id={data.tradeId} to position trade_ids',
-                extra=strategy.extra_log
-            )
-            position.save(update_fields=['trade_ids'])
+            position.add_trade_id(data.tradeId)
         sl_tp_data = Namespace(**position.sl_tp_data)
         if data.state not in ['filled', 'partially_filled']:
             logger.debug(

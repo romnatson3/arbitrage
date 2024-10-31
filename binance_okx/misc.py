@@ -3,7 +3,7 @@ import json
 import re
 from datetime import datetime
 from django.utils.safestring import mark_safe
-from binance_okx.models import Position, Bill, Execution, Strategy
+from binance_okx.models import Position, Bill, Strategy
 
 
 logger = logging.getLogger(__name__)
@@ -65,30 +65,3 @@ def convert_dict_values(data: dict) -> dict[str, str | int | float]:
                 except ValueError:
                     data[k] = v
     return data
-
-
-def fetch_trade_executions(queryset: Position):
-    queryset = queryset.filter(mode=Strategy.Mode.trade).all()
-    if not queryset:
-        logger.warning('No positions found to fetch trade executions')
-        return 0
-    for position in queryset:
-        position.strategy._extra_log.update(symbol=position.symbol.symbol, position=position.id)
-        order_ids = Bill.objects.filter(data__tradeId__in=position.trade_ids).values_list('data__ordId', flat=True)
-        bills = Bill.objects.filter(data__ordId__in=order_ids).all()
-        executions = []
-        for bill in bills:
-            executions.append(
-                Execution(
-                    bill_id=bill.bill_id, trade_id=bill.data['tradeId'],
-                    data=bill.data, position=position
-                )
-            )
-        logger.info(
-            f'Found {len(bills)} execution for position {position.id}',
-            extra=position.strategy._extra_log
-        )
-        if executions:
-            Execution.objects.bulk_create(executions, ignore_conflicts=True)
-    logger.info(f'Updated {len(queryset)} positions', extra=position.strategy._extra_log)
-    return len(queryset)

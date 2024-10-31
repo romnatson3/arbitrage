@@ -8,7 +8,7 @@ from django_redis import get_redis_connection
 from django.utils import timezone
 import okx.Account
 from .exceptions import AcquireLockException
-from .models import OkxSymbol, Strategy, Symbol, Account, Execution
+from .models import OkxSymbol, Strategy, Symbol, Account, Bill
 from .misc import convert_dict_values
 from .exceptions import GetBillsException
 
@@ -404,5 +404,5 @@ def get_bills(account: Account, bill_id: Optional[int] = None) -> list[dict[str,
         raise GetBillsException(result)
     bills = list(map(convert_dict_values, result['data']))
     for i in bills:
-        i['subType'] = Execution.sub_type.get(i['subType'], i['subType'])
+        i['subType'] = Bill.sub_type.get(i['subType'], i['subType'])
     return bills

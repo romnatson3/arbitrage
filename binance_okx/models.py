@@ -5,13 +5,15 @@ from datetime import datetime
 from django.utils import timezone
 import okx.PublicData as PublicData
 from django.db import models
-from django.db.models import QuerySet
+from django.db.models import QuerySet, F, Subquery
+from django.db.models.functions import JSONObject
 from django.core.cache import cache
 from django.contrib.auth.models import AbstractUser
 from django_celery_beat.models import PeriodicTask, IntervalSchedule
 
 
 connection = get_redis_connection('default')
+logger = logging.getLogger(__name__)
 
 
 class BaseModel(models.Model):
@@ -317,34 +319,12 @@ class Strategy(BaseModel):
         )
 
     def get_last_open_trade_position(self, symbol: str) -> QuerySet:
-        positions = sorted(
-            filter(
-                lambda x: (
-                    x.symbol.symbol == symbol and
-                    x.is_open is True and
-                    x.mode == Strategy.Mode.trade
-                ),
-                self.positions.all()
-            ),
-            key=lambda x: x.id,
-            reverse=True
-        )
-        return positions[0] if positions else None
+        return self.positions.filter(
+            symbol__symbol=symbol, is_open=True, mode=Strategy.Mode.trade).last()
 
     def get_last_open_emulate_position(self, symbol: str) -> QuerySet:
-        positions = sorted(
-            filter(
-                lambda x: (
-                    x.symbol.symbol == symbol and
-                    x.is_open is True and
-                    x.mode == Strategy.Mode.emulate
-                ),
-                self.positions.all()
-            ),
-            key=lambda x: x.id,
-            reverse=True
-        )
-        return positions[0] if positions else None
+        return self.positions.filter(
+            symbol__symbol=symbol, is_open=True, mode=Strategy.Mode.emulate).last()
 
     @property
     def open_fee(self) -> float:
@@ -369,28 +349,24 @@ class Strategy(BaseModel):
         return self.__str__()
 
 
-class ExecutionManager(models.Manager):
+class BillManager(models.Manager):
     def get_queryset(self) -> QuerySet:
         return (
             super().get_queryset()
-            .select_related(
-                'position', 'position__symbol', 'position__strategy',
-                'position__symbol__okx'
-            )
+            .prefetch_related('account', 'symbol')
         )
 
 
-class Execution(BaseModel):
+class Bill(BaseModel):
     class Meta:
-        verbose_name = 'Execution'
-        verbose_name_plural = 'Executions'
-        unique_together = ('bill_id', 'trade_id')
+        verbose_name = 'Bill'
+        verbose_name_plural = 'Bills'
         indexes = [
-            models.Index(fields=['bill_id']),
-            models.Index(fields=['trade_id'])
+            models.Index(fields=['order_id'], name='bill_order_id_idx'),
+            models.Index(fields=['trade_id'], name='bill_trade_id_idx')
         ]
 
-    objects = ExecutionManager()
+    objects = BillManager()
 
     sub_type = {
         3: 'Open long',
@@ -437,39 +413,33 @@ class Execution(BaseModel):
         }
         return data
 
-    data = models.JSONField('Date', default=dict)
-    position = models.ForeignKey('Position', on_delete=models.CASCADE, related_name='executions')
-    bill_id = models.CharField('Bill ID', max_length=255)
-    trade_id = models.CharField('Trade ID', max_length=255)
+    bill_id = models.BigIntegerField('Bill ID', primary_key=True)
+    order_id = models.BigIntegerField('Order ID', blank=True, null=True)
+    trade_id = models.BigIntegerField('Trade ID', blank=True, null=True)
+    account = models.ForeignKey('Account', on_delete=models.PROTECT, related_name='bills')
+    data = models.JSONField('Data', default=dict)
+    mode = models.CharField('Mode', max_length=20, blank=True, null=True)
+    symbol = models.ForeignKey('Symbol', on_delete=models.PROTECT, related_name='bills', null=True)
+
+    @property
+    def amount_usdt(self) -> float:
+        from .helper import calc
+        base_coin = calc.get_base_coin_from_sz(
+            self.data['sz'], self.symbol.okx.ct_val
+        )
+        usdt = base_coin * self.data['px']
+        return round(usdt, 2)
 
     def __str__(self):
-        return f'{self.position} - {self.bill_id}'
+        return str(self.trade_id)
 
 
-class BillManager(models.Manager):
+class OrderManager(models.Manager):
     def get_queryset(self) -> QuerySet:
         return (
             super().get_queryset()
-            .select_related('account')
+            .prefetch_related('account', 'symbol')
         )
-
-
-class Bill(BaseModel):
-    class Meta:
-        verbose_name = 'Bill'
-        verbose_name_plural = 'Bills'
-        indexes = [
-            models.Index(models.F('data__ordId'), name='bill_ord_id_idx')
-        ]
-
-    objects = BillManager()
-
-    bill_id = models.BigIntegerField('Bill ID', primary_key=True)
-    account = models.ForeignKey('Account', on_delete=models.CASCADE, related_name='bills')
-    data = models.JSONField('Data', default=dict)
-
-    def __str__(self):
-        return str(self.bill_id)
 
 
 class Order(BaseModel):
@@ -477,21 +447,27 @@ class Order(BaseModel):
         verbose_name = 'Order'
         verbose_name_plural = 'Orders'
         indexes = [
-            models.Index(models.F('order_id'), name='order_order_id_idx'),
-            models.Index(models.F('trade_id'), name='order_trade_id_idx')
+            models.Index(fields=['order_id'], name='order_order_id_idx'),
+            models.Index(fields=['trade_id'], name='order_trade_id_idx')
         ]
 
-    order_id = models.CharField('Order ID', max_length=255)
-    trade_id = models.CharField('Trade ID', max_length=255, null=True)
-    account = models.ForeignKey('Account', on_delete=models.CASCADE, related_name='orders')
+    objects = OrderManager()
+
+    order_id = models.BigIntegerField('Order ID')
+    trade_id = models.BigIntegerField('Trade ID', blank=True, null=True)
+    account = models.ForeignKey('Account', on_delete=models.PROTECT, related_name='orders')
     data = models.JSONField('Data', default=dict)
+    symbol = models.ForeignKey(Symbol, on_delete=models.PROTECT, related_name='orders', null=True)
+
+    def __str__(self):
+        return str(self.order_id)
 
 
 class PositionManager(models.Manager):
     def get_queryset(self) -> QuerySet:
         return (
             super().get_queryset()
-            .select_related('symbol', 'strategy')
+            .prefetch_related('symbol', 'strategy', 'account')
         )
 
     def create(self, *args, **kwargs):
@@ -669,10 +645,15 @@ class Position(BaseModel):
     def increased(self) -> bool:
         return self.sl_tp_data['increased_position']
 
-    def save(self, *args, **kwargs):
+    def add_trade_id(self, trade_id: int) -> None:
         trade_ids = set(self.trade_ids)
-        self.trade_ids = [i for i in trade_ids if i]
-        super().save(*args, **kwargs)
+        trade_ids.add(trade_id)
+        self.trade_ids = sorted([i for i in trade_ids if i])
+        self.save(update_fields=['trade_ids'])
+        logger.info(
+            f'Add {trade_id=} to position trade_ids',
+            extra=self.strategy.extra_log | dict(position=self.id)
+        )
 
     @property
     def side(self) -> str:
@@ -689,6 +670,28 @@ class Position(BaseModel):
     @property
     def entry_price(self) -> float:
         return self.position_data['avgPx']
+
+    @property
+    def bills(self) -> QuerySet:
+        return (
+            Bill.objects.filter(
+                order_id__in=(
+                    Bill.objects.filter(trade_id__in=self.trade_ids)
+                    .values_list('order_id', flat=True)
+                )
+            ).annotate(
+                position=Subquery(
+                    Position.objects.filter(id=self.id)
+                    .annotate(
+                        data=JSONObject(
+                            id=F('id'),
+                            data=F('position_data'),
+                            ask_bid=F('ask_bid_data')
+                        )
+                    ).values('data')
+                )
+            ).order_by('bill_id')
+        )
 
     def __str__(self):
         return str(self.id)

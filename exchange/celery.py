@@ -26,7 +26,6 @@ app.conf.update(
         'binance_okx.tasks.run_strategy': {'queue': 'default'},
         'binance_okx.tasks.open_or_increase_position': {'queue': 'positions'},
         'binance_okx.tasks.create_or_update_position': {'queue': 'positions'},
-        'binance_okx.tasks.create_execution': {'queue': 'positions'},
         'binance_okx.tasks.check_position_close_time': {'queue': 'positions'},
         'binance_okx.handlers.orders_handler': {'queue': 'positions'},
         'binance_okx.tasks.check_condition': {'queue': 'check_condition'},

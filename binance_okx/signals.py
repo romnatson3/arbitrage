@@ -38,8 +38,8 @@ def handle_post_save_position(sender, created, instance, **kwargs):
         key = f'open_or_increase_position_{instance.strategy_id}_{instance.symbol}'
         extra = instance.strategy.extra_log | {'position': instance.id, 'symbol': instance.symbol}
         if instance._is_open and not instance.is_open:
-            TaskLock(key).release()
-            logger.warning('Position closed. TaskLock released', extra=extra)
+            if TaskLock(key).release():
+                logger.warning('Position closed. TaskLock released', extra=extra)
         if instance.mode == Strategy.Mode.trade:
             if not instance._stop_loss_breakeven_set and instance.stop_loss_breakeven_set:
                 TaskLock(key).release()
