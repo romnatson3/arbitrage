@@ -304,13 +304,6 @@ def check_second_condition(
                 f'{delta_percent=:.5f} >= {min_delta_percent=:.5f}',
                 extra=strategy.extra_log
             )
-            logger.debug(
-                f'{date_time_previous_prices=}, {binance_previous_ask=}, {binance_previous_bid=}, '
-                f'{okx_previous_ask=}, {okx_previous_bid=}, '
-                f'{date_time_last_prices=}, {binance_last_ask=}, {binance_last_bid=}, '
-                f'{okx_last_ask=}, {okx_last_bid=}',
-                extra=strategy.extra_log
-            )
             if position_side == 'long':
                 delta_points_binance = (binance_last_bid - binance_previous_bid) / symbol.okx.tick_size
                 delta_points_okx = (okx_last_ask - okx_previous_ask) / symbol.okx.tick_size

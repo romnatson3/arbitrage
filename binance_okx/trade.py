@@ -427,7 +427,7 @@ class OkxEmulateTrade():
             px=position.position_data['avgPx'],
             ts=date_time,
             fee=round(position.size_usdt * self.strategy.open_fee / 100, 10),
-            pnl=None
+            pnl=0
         )
         bill = Bill.objects.create(
             trade_id=int(monotonic() * 1000),

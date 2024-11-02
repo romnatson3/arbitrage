@@ -61,7 +61,7 @@ def convert_dict_values(data: dict) -> dict[str, str | int | float]:
                 data[k] = None
             if k in ['uTime', 'cTime', 'pTime', 'fillTime', 'ts']:
                 try:
-                    data[k] = datetime.fromtimestamp(int(v) / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')
+                    data[k] = datetime.fromtimestamp(int(v) / 1000).strftime('%d-%m-%Y %H:%M:%S.%f')[:-3]
                 except ValueError:
                     data[k] = v
     return data

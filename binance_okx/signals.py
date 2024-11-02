@@ -35,21 +35,41 @@ def handle_pre_save_position(sender, **kwargs):
 @receiver(post_save, sender=Position)
 def handle_post_save_position(sender, created, instance, **kwargs):
     if not created:
-        key = f'open_or_increase_position_{instance.strategy_id}_{instance.symbol}'
-        extra = instance.strategy.extra_log | {'position': instance.id, 'symbol': instance.symbol}
+        key = f'main_lock_{instance.strategy_id}_{instance.symbol}'
+        extra = (
+            instance.strategy.extra_log |
+            {'position': instance.id, 'symbol': instance.symbol}
+        )
         if instance._is_open and not instance.is_open:
             if TaskLock(key).release():
-                logger.warning('Position closed. TaskLock released', extra=extra)
+                logger.warning('Main lock released. Position closed', extra=extra)
         if instance.mode == Strategy.Mode.trade:
-            if not instance._stop_loss_breakeven_set and instance.stop_loss_breakeven_set:
-                TaskLock(key).release()
-                logger.info('Stop loss breakeven set. TaskLock released', extra=extra)
+            if (
+                not instance._stop_loss_breakeven_set and
+                instance.stop_loss_breakeven_set and
+                instance.is_open
+            ):
+                if TaskLock(key).release():
+                    logger.info(
+                        'Main lock released. Stop loss breakeven set', extra=extra
+                    )
+    else:
+        if TaskLock(
+            f'main_lock_{instance.strategy.id}_{instance.symbol}', timeout=None
+        ).acquire():
+            logger.warning(
+                'Main lock acquired before creating new position',
+                extra=instance.strategy.extra_log | {'position': instance.id}
+            )
 
 
 @receiver(post_delete, sender=Position)
 def handle_post_delete_position(sender, instance, **kwargs):
-    key = f'open_or_increase_position_{instance.strategy_id}_{instance.symbol}'
-    extra = instance.strategy.extra_log | {'position': instance.id, 'symbol': instance.symbol}
+    key = f'main_lock_{instance.strategy_id}_{instance.symbol}'
+    extra = (
+        instance.strategy.extra_log |
+        {'position': instance.id, 'symbol': instance.symbol}
+    )
     if instance.is_open:
         TaskLock(key).release()
-        logger.warning('Position deleted. TaskLock released', extra=extra)
+        logger.warning('Main lock released. Position deleted', extra=extra)

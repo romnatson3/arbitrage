@@ -264,7 +264,7 @@ def create_or_update_position(data: dict) -> None:
                 )
                 return
     except Exception as e:
-        logger.exception(e)
+        logger.exception(e, extra=strategy.extra_log)
         raise e
 
 
@@ -326,59 +326,66 @@ def open_or_increase_position(
     strategy = Strategy.objects.cache(id=strategy_id, enabled=True)[0]
     strategy._extra_log.update(symbol=symbol)
     try:
-        cache.set(f'okx_ask_bid_prices_{symbol}', prices)
-        logger.trace(
-            f'Caching okx_ask_bid_prices_{symbol} {prices}',
+        with TaskLock(f'open_or_increase_position_{strategy_id}_{symbol.symbol}'):
+            cache.set(f'okx_ask_bid_prices_{symbol}', prices)
+            logger.debug(f'Caching {prices=}', extra=strategy.extra_log)
+            position = Position.objects.filter(
+                strategy=strategy, symbol=symbol, is_open=True).last()
+            strategy._extra_log.update(
+                symbol=symbol, position=position.id if position else None)
+            if strategy.mode == Strategy.Mode.trade:
+                if position:
+                    if position.side == position_side:
+                        if position.stop_loss_breakeven_set and not position.increased:
+                            increase_trade_position(strategy, position, prices)
+                else:
+                    open_trade_position(strategy, symbol, position_side, prices)
+            elif strategy.mode == Strategy.Mode.emulate:
+                if not position:
+                    open_emulate_position(strategy, symbol, position_side, prices)
+    except AcquireLockException:
+        logger.critical(
+            'Task open_or_increase_position is currently running',
             extra=strategy.extra_log
         )
-        position = Position.objects.filter(
-            strategy=strategy, symbol=symbol, is_open=True).last()
-        strategy._extra_log.update(
-            symbol=symbol, position=position.id if position else None)
-        if strategy.mode == Strategy.Mode.trade:
-            if position:
-                if position.side == position_side:
-                    if position.stop_loss_breakeven_set and not position.increased:
-                        increase_trade_position(strategy, position, prices)
-            else:
-                open_trade_position(strategy, symbol, position_side, prices)
-        elif strategy.mode == Strategy.Mode.emulate:
-            if not position:
-                open_emulate_position(strategy, symbol, position_side, prices)
     except Exception as e:
         logger.exception(e, extra=strategy.extra_log)
-        TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}').release()
-        logger.warning('TaskLock released', extra=strategy.extra_log)
+        TaskLock(f'main_lock_{strategy.id}_{symbol}').release()
+        logger.warning(
+            'Main lock released. Exception occurred',
+            extra=strategy.extra_log
+        )
         raise e
 
 
-@app.task
-def check_condition(data: dict) -> None:
-    symbol = Symbol.objects.cache(symbol=data['s'])[0]
-    strategies = Strategy.objects.cache(enabled=True, symbols=symbol)
-    for strategy in strategies:
-        try:
-            lock = TaskLock(
-                f'open_or_increase_position_{strategy.id}_{symbol}',
-                timeout=None
-            )
-            if lock.locked():
-                continue
-            strategy._extra_log.update(symbol=symbol)
-            condition_met, position_side, prices = (
-                check_all_conditions(strategy, symbol, int(data['cts']))
-            )
-            if condition_met:
-                if lock.acquire():
-                    logger.warning(
-                        'Condition met. TaskLock acquired',
-                        extra=strategy.extra_log
+@app.task(bind=True)
+def check_condition(self, data: dict) -> None:
+    try:
+        with TaskLock(f'task_check_condition_{data["s"]}'):
+            symbol = Symbol.objects.cache(symbol=data['s'])[0]
+            strategies = Strategy.objects.cache(enabled=True, symbols=symbol)
+            for strategy in strategies:
+                try:
+                    lock = TaskLock(f'main_lock_{strategy.id}_{symbol}', timeout=None)
+                    if lock.locked():
+                        continue
+                    strategy._extra_log.update(symbol=symbol)
+                    condition_met, position_side, prices = (
+                        check_all_conditions(strategy, symbol, int(data['cts']))
                     )
-                    open_or_increase_position.delay(
-                        strategy.id, symbol.symbol, position_side, prices
-                    )
-        except Exception as e:
-            logger.exception(e, extra=strategy.extra_log)
+                    if condition_met:
+                        if lock.acquire():
+                            logger.warning(
+                                'Main lock acquired after condition met',
+                                extra=strategy.extra_log
+                            )
+                            open_or_increase_position.delay(
+                                strategy.id, symbol.symbol, position_side, prices
+                            )
+                except Exception as e:
+                    logger.exception(e, extra=strategy.extra_log)
+    except AcquireLockException:
+        logger.trace('Task check_condition is currently running')
 
 
 @app.task
@@ -402,7 +409,7 @@ def run_websocket_okx_positions() -> None:
                 )
                 time.sleep(3)
     except AcquireLockException:
-        logger.debug('Task run_websocket_okx_positions is now running')
+        logger.debug('Task run_websocket_okx_positions is currently running')
     except Exception as e:
         logger.exception(e)
         raise e
@@ -427,7 +434,7 @@ def run_websocket_okx_orders() -> None:
                 ws.add_handler(lambda data: orders_handler.delay(data))
                 time.sleep(3)
     except AcquireLockException:
-        logger.debug('Task run_websocket_okx_orders is now running')
+        logger.debug('Task run_websocket_okx_orders is currently running')
     except Exception as e:
         logger.exception(e)
         raise e
@@ -445,7 +452,7 @@ def run_websocket_okx_last_price() -> None:
                 ws.start()
                 ws.add_handler(lambda data: closing_position_by_limit.delay(data))
     except AcquireLockException:
-        logger.debug('Task run_websocket_okx_last_price is now running')
+        logger.debug('Task run_websocket_okx_last_price is currently running')
     except Exception as e:
         logger.exception(e)
         raise e
@@ -463,7 +470,7 @@ def run_websocket_okx_market_price() -> None:
                 ws.start()
                 ws.add_handler(save_okx_market_price_to_cache)
     except AcquireLockException:
-        logger.debug('Task run_websocket_okx_market_price is now running')
+        logger.debug('Task run_websocket_okx_market_price is currently running')
     except Exception as e:
         logger.exception(e)
         raise e
@@ -482,7 +489,7 @@ def run_websocket_okx_ask_bid() -> None:
                 ws.add_handler(save_okx_ask_bid_to_cache)
                 ws.add_handler(closing_position_by_market)
     except AcquireLockException:
-        logger.debug('Task run_websocket_okx_ask_bid is now running')
+        logger.debug('Task run_websocket_okx_ask_bid is currently running')
     except Exception as e:
         logger.exception(e)
         raise e
@@ -501,7 +508,7 @@ def run_websocket_binance_ask_bid() -> None:
                 ws.add_handler(write_ask_bid_to_csv_and_cache_by_symbol)
                 ws.add_handler(lambda data: check_condition.delay(data))
     except AcquireLockException:
-        logger.debug('Task run_websocket_binance_ask_bid is now running')
+        logger.debug('Task run_websocket_binance_ask_bid is currently running')
     except Exception as e:
         logger.exception(e)
         raise e

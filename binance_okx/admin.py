@@ -79,13 +79,17 @@ class StatusLogAdmin(admin.ModelAdmin):
     @admin.display(description='Message')
     def colored_msg(self, obj):
         if obj.level in [logging.NOTSET, logging.INFO]:
+            color = 'darkgreen'
+        elif obj.level == logging.DEBUG:
             color = 'gray'
-        elif obj.level in [logging.WARNING, logging.DEBUG]:
+        elif obj.level == logging.WARNING:
             color = 'orange'
-        else:
+        elif obj.level in [logging.ERROR, logging.CRITICAL]:
             color = 'red'
         return format_html(
-            '<pre style="color:{color}; white-space: pre-wrap; font-size: 1.02em;">{msg}</pre>',
+            '<pre style="color:{color};white-space: pre-wrap;'
+            'font-size: 1em;font-family: monospace"'
+            '>{msg}</pre>',
             color=color,
             msg=obj.msg
         )
@@ -329,7 +333,7 @@ class StrategyAdmin(admin.ModelAdmin):
 class PositionAdmin(admin.ModelAdmin):
     list_display = (
         'id', 'is_open', 'strategy', '_position_side', 'mode', 'symbol',
-        '_trade_ids', '_pos', '_amount', '_duration', 'updated_at'
+        '_trade_ids', '_pos', '_amount', '_duration', '_datetime'
     )
     fieldsets = (
         (None, {'fields': ('id', 'is_open', 'strategy', 'symbol', 'mode', 'account')}),
@@ -386,6 +390,7 @@ class PositionAdmin(admin.ModelAdmin):
 
     # def has_change_permission(self, request, obj=None):
     #     return False
+    # http://172.22.249.237:8000/Qgr476gLAiCa/binance_okx/bill/1942454611814744065/change/
 
     @admin.display(description='Bills')
     def _bills(self, obj) -> str:
@@ -393,33 +398,34 @@ class PositionAdmin(admin.ModelAdmin):
         rows = [
             '<table class="bills">',
             '<tr>',
+            '<th>Sub type</th>',
+            '<th>Datetime</th>',
             '<th>Bill ID</th>',
             '<th>Trade ID</th>',
             '<th>Order ID</th>',
             '<th>Symbol</th>',
             '<th>Mode</th>',
-            '<th>Sub type</th>',
             '<th>Price</th>',
             '<th>Size</th>',
             '<th>Amount</th>',
             '<th>PnL</th>',
-            '<th>Datetime</th>',
             '</tr>'
         ]
         for bill in obj.bills:
             rows.append(
                 '<tr>'
-                f'<td>{bill.bill_id}</td>'
+                f'<td>{bill.data["subType"]}</td>'
+                f'<td>{bill.data["ts"]}</td>'
+                f'<td><a href={reverse("admin:binance_okx_bill_change", args=[bill.bill_id])}>'
+                f'{bill.bill_id}</a></td>'
                 f'<td>{bill.trade_id}</td>'
                 f'<td>{bill.order_id}</td>'
                 f'<td>{bill.symbol}</td>'
                 f'<td>{bill.mode}</td>'
-                f'<td>{bill.data["subType"]}</td>'
                 f'<td>{bill.data["px"]}</td>'
                 f'<td>{bill.data["sz"]}</td>'
                 f'<td>{bill.amount_usdt}</td>'
                 f'<td>{bill.data["pnl"]}</td>'
-                f'<td>{bill.data["ts"]}</td>'
                 '</tr>'
             )
         rows.append('</table>')
@@ -463,6 +469,10 @@ class PositionAdmin(admin.ModelAdmin):
     @admin.display(description='Position side')
     def _position_side(self, obj) -> str:
         return obj.position_data.get('posSide', '')
+
+    @admin.display(description='uTime', ordering='position_data__uTime')
+    def _datetime(self, obj) -> str:
+        return obj.position_data.get('uTime', '')
 
     @admin.display(description='Duration, s')
     def _duration(self, obj) -> int:
@@ -550,8 +560,10 @@ class PositionAdmin(admin.ModelAdmin):
                         ask_bid_data.spread_points_entry,
                         ask_bid_data.spread_percent_entry,
                         usdt,
-                        position_data.cTime.split(' ')[0],
-                        position_data.cTime.split(' ')[1],
+                        bill_data.ts.split(' ')[0],
+                        bill_data.ts.split(' ')[1],
+                        # position_data.cTime.split(' ')[0],
+                        # position_data.cTime.split(' ')[1],
                         bill_data.px,
                         None if is_open else bill_data.ts.split(' ')[1],
                         None if is_open else duration,
@@ -689,15 +701,17 @@ class BillAdmin(admin.ModelAdmin):
     search_fields = ('bill_id', 'trade_id', 'order_id')
     list_filter = ('account', 'mode', BillInstrumentFilter, BillSubTypeFilter)
     fields = (
-        'bill_id', 'account', 'order_id', 'trade_id', 'symbol', '_data',
+        'bill_id', 'account', 'order_id', 'trade_id', 'symbol', 'mode', '_data',
         'created_at', 'updated_at'
     )
     readonly_fields = (
-        'bill_id', 'account', 'symbol', '_data', 'created_at', 'updated_at'
+        'bill_id', 'account', 'symbol', '_data', 'created_at', 'updated_at',
+        'mode'
     )
     list_display_links = ('bill_id', 'account')
     ordering = ('-data__ts', '-bill_id')
     list_per_page = 500
+    actions = ['delete_all']
 
     # def has_delete_permission(self, request, obj=None):
     #     return False
@@ -707,6 +721,11 @@ class BillAdmin(admin.ModelAdmin):
 
     # def has_change_permission(self, request, obj=None):
     #     return False
+
+    @admin.action(description='Delete all')
+    def delete_all(self, request, queryset):
+        Bill.objects.all().delete()
+        self.message_user(request, 'All bills deleted')
 
     @admin.display(description='Data')
     def _data(self, obj) -> str:

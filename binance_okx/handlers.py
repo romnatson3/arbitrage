@@ -27,7 +27,6 @@ def save_okx_market_price_to_cache(data: dict) -> None:
 
 
 def write_ask_bid_to_csv_and_cache_by_symbol(data: dict) -> None:
-    # connection = get_redis_connection('default')
     pipeline = connection.pipeline()
     symbol = data['s']
     binance_ask_price = float(data['a'])
@@ -94,7 +93,6 @@ def write_ask_bid_to_csv_and_cache_by_symbol(data: dict) -> None:
 
 
 def save_okx_ask_bid_to_cache(data: dict) -> None:
-    # connection = get_redis_connection('default')
     pipeline = connection.pipeline()
     symbol = ''.join(data['instId'].split('-')[:2])
     ask_price = float(data['askPx'])
@@ -181,7 +179,10 @@ def orders_handler(data: dict) -> None:
                         f'First part sz={sl_tp_data.tp_first_part} of position is closed',
                         extra=strategy.extra_log
                     )
-                    if strategy.stop_loss_breakeven and not sl_tp_data.stop_loss_breakeven_order_id:
+                    if (
+                        strategy.stop_loss_breakeven and
+                        not sl_tp_data.stop_loss_breakeven_order_id
+                    ):
                         trade = OkxTrade(strategy, position.symbol, position.sz, position.side)
                         order_id = trade.update_stop_loss(
                             price=sl_tp_data.stop_loss_breakeven, sz=position.sz
@@ -250,7 +251,7 @@ def orders_handler(data: dict) -> None:
                     extra=strategy.extra_log
                 )
     except Exception as e:
-        logger.exception(e)
+        logger.exception(e, extra=strategy.extra_log)
         raise e
 
 
@@ -746,7 +747,10 @@ def closing_trade_position_market_parts(
                             f'size_contract={sl_tp_data.tp_first_part}',
                             extra=strategy.extra_log
                         )
-                        if strategy.stop_loss_breakeven and not sl_tp_data.stop_loss_breakeven_order_id:
+                        if (
+                            strategy.stop_loss_breakeven and
+                            not sl_tp_data.stop_loss_breakeven_order_id
+                        ):
                             order_id = trade.update_stop_loss(
                                 price=sl_tp_data.stop_loss_breakeven,
                                 sz=position.sz

@@ -171,11 +171,18 @@ def open_trade_position(
     strategy: Strategy, symbol: Symbol, position_side: str, prices: dict
 ) -> None:
     if funding_time_too_close(strategy, symbol, position_side):
-        TaskLock(f'open_or_increase_position_{strategy.id}_{symbol}').release()
+        TaskLock(f'main_lock_{strategy.id}_{symbol}').release()
+        logger('Main lock released. Funding time too close', extra=strategy.extra_log)
         return
     _, size_contract, size_usdt = get_pre_enter_data(strategy, symbol, position_side, prices)
     trade = OkxTrade(strategy, symbol, size_contract, position_side)
-    trade.open_position()
+    if Position.objects.filter(strategy=strategy, symbol=symbol, is_open=True).exists():
+        logger.critical(
+            'Position already open. Attempt to place orders after opening position',
+            extra=strategy.extra_log
+        )
+    else:
+        trade.open_position()
 
 
 def increase_trade_position(strategy: Strategy, position: Position, prices: dict) -> None:
@@ -185,7 +192,13 @@ def increase_trade_position(strategy: Strategy, position: Position, prices: dict
     position.sl_tp_data['increased_position'] = True
     position.save(update_fields=['sl_tp_data'])
     trade = OkxTrade(strategy, position.symbol, size_contract, position.side)
-    trade.open_position(increase=True)
+    if Position.objects.filter(id=position.id, is_open=True).exists():
+        trade.open_position(increase=True)
+    else:
+        logger.critical(
+            'Position is not open. Attempt to increase closed position',
+            extra=strategy.extra_log | {'position': position.id}
+        )
 
 
 def place_orders_after_open_trade_position(position: Position) -> None:

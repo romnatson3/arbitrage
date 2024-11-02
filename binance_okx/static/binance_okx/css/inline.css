@@ -2,6 +2,12 @@ div.form-row.field-_bills > div > div.flex-container > label {
     display: none;
 }
 
+div.field-_position_data > label,
+div.field-_ask_bid_data > label,
+div.field-_sl_tp_data > label {
+    display: none;
+}
+
 .bills {
     width: 100%;
     border-collapse: collapse;
@@ -33,6 +39,7 @@ div.form-row.field-_bills > div > div.flex-container > label {
     white-space: nowrap;
 }
 
-.bills th:last-child {
+/* .bills th:last-child { */
+.bills th:nth-child(2) {
     width: 10%;
 }

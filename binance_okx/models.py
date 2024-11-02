@@ -649,7 +649,7 @@ class Position(BaseModel):
         trade_ids = set(self.trade_ids)
         trade_ids.add(trade_id)
         self.trade_ids = sorted([i for i in trade_ids if i])
-        self.save(update_fields=['trade_ids'])
+        Position.objects.filter(pk=self.id).update(trade_ids=self.trade_ids)
         logger.info(
             f'Add {trade_id=} to position trade_ids',
             extra=self.strategy.extra_log | dict(position=self.id)

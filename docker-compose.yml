@@ -167,7 +167,7 @@ services:
 
   positions:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 20 -l INFO -Q positions
+    entrypoint: celery -A exchange worker -c 30 -l INFO -Q positions
     deploy:
       mode: replicated
       replicas: 1
@@ -186,7 +186,7 @@ services:
 
   market:
     image: exchange:latest
-    entrypoint: celery -A exchange worker -c 20 -l INFO -Q market 
+    entrypoint: celery -A exchange worker -c 30 -l INFO -Q market 
     deploy:
       mode: replicated
       replicas: 1
