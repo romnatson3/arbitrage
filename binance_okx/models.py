@@ -4,7 +4,7 @@ from django_redis import get_redis_connection
 from datetime import datetime
 from django.utils import timezone
 import okx.PublicData as PublicData
-from django.db import models
+from django.db import models, transaction
 from django.db.models import QuerySet, F, Subquery
 from django.db.models.functions import JSONObject
 from django.core.cache import cache
@@ -36,7 +36,7 @@ class StatusLogManager(models.Manager):
     def get_queryset(self):
         return (
             super().get_queryset()
-            .select_related('strategy', 'created_by')
+            .select_related('strategy')
         )
 
 
@@ -61,10 +61,6 @@ class StatusLog(BaseModel):
     level = models.PositiveSmallIntegerField(choices=LOG_LEVELS, default=logging.ERROR, db_index=True)
     msg = models.TextField()
     trace = models.TextField(blank=True, null=True)
-    created_by = models.ForeignKey(
-        User, on_delete=models.CASCADE, related_name='status_logs',
-        help_text='Created by', null=True
-    )
     strategy = models.ForeignKey(
         'Strategy', on_delete=models.CASCADE, related_name='status_logs',
         help_text='Strategy', null=True
@@ -88,7 +84,6 @@ class Account(BaseModel):
     api_secret = models.CharField('api_secret', max_length=255, blank=False, null=False, help_text='API secret')
     api_passphrase = models.CharField('api_passphrase', max_length=255, blank=True, null=True, help_text='API passphrase')
     testnet = models.BooleanField('testnet', default=False)
-    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='accounts', help_text='Created by')
 
     def __str__(self):
         return f'{self.name}'
@@ -223,8 +218,7 @@ class StrategyManager(models.Manager):
     def get_queryset(self) -> QuerySet:
         return (
             super().get_queryset()
-            .select_related('first_account', 'second_account', 'created_by')
-            # .prefetch_related('symbols')
+            .select_related('second_account')
             .prefetch_related('symbols', 'positions')
         )
 
@@ -261,7 +255,6 @@ class Strategy(BaseModel):
     first_account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='strategies_set', help_text='Binance account', null=True)
     second_account = models.ForeignKey(Account, on_delete=models.CASCADE, related_name='strategies', help_text='OKX account', verbose_name='OKX account')
     symbols = models.ManyToManyField(Symbol, related_name='strategies', help_text='Symbols')
-    created_by = models.ForeignKey(User, on_delete=models.PROTECT, related_name='strategies', help_text='Created by')
     position_size = models.FloatField('Position size', default=0.0, help_text='Max position size, USDT')
     taker_fee = models.FloatField('Taker fee', default=0.0, help_text='Taker fee, %, market order')
     maker_fee = models.FloatField('Maker fee', default=0.0, help_text='Maker fee, %, limit order')
@@ -305,14 +298,11 @@ class Strategy(BaseModel):
 
     @property
     def extra_log(self) -> dict:
-        if not self._extra_log['created_by'] and hasattr(self, 'created_by'):
-            self._extra_log.update(created_by=self.created_by)
         return self._extra_log
 
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(*args, **kwargs)
         self._extra_log = dict(
-            created_by=None,
             strategy=self,
             symbol=None,
             position=None
@@ -646,10 +636,13 @@ class Position(BaseModel):
         return self.sl_tp_data['increased_position']
 
     def add_trade_id(self, trade_id: int) -> None:
-        trade_ids = set(self.trade_ids)
-        trade_ids.add(trade_id)
-        self.trade_ids = sorted([i for i in trade_ids if i])
-        Position.objects.filter(pk=self.id).update(trade_ids=self.trade_ids)
+        with transaction.atomic():
+            trade_ids = set(
+                Position.objects.values_list('trade_ids', flat=True).get(id=self.id)
+            )
+            trade_ids.add(trade_id)
+            trade_ids = sorted([i for i in trade_ids if i])
+            Position.objects.filter(id=self.id).update(trade_ids=trade_ids)
         logger.info(
             f'Add {trade_id=} to position trade_ids',
             extra=self.strategy.extra_log | dict(position=self.id)

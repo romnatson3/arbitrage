@@ -176,10 +176,14 @@ def open_trade_position(
         return
     _, size_contract, size_usdt = get_pre_enter_data(strategy, symbol, position_side, prices)
     trade = OkxTrade(strategy, symbol, size_contract, position_side)
-    if Position.objects.filter(strategy=strategy, symbol=symbol, is_open=True).exists():
+    position_id = (
+        Position.objects.filter(strategy=strategy, symbol=symbol, is_open=True)
+        .values_list('id', flat=True).last()
+    )
+    if position_id:
         logger.critical(
             'Position already open. Attempt to place orders after opening position',
-            extra=strategy.extra_log
+            extra=strategy.extra_log | {'position': position_id}
         )
     else:
         trade.open_position()

@@ -71,7 +71,7 @@ class StatusLogAdmin(admin.ModelAdmin):
     list_per_page = 500
     search_fields = ('msg', 'trace', 'position', 'symbol')
     fields = (
-        'level', 'colored_msg', 'traceback', 'create_datetime_format', 'created_by',
+        'level', 'colored_msg', 'traceback', 'create_datetime_format',
         'strategy', 'symbol', 'position'
     )
     actions = ['delete_all']
@@ -98,12 +98,6 @@ class StatusLogAdmin(admin.ModelAdmin):
     def delete_all(self, request, queryset):
         StatusLog.objects.all().delete()
         self.message_user(request, 'All logs deleted')
-
-    def get_queryset(self, request) -> QuerySet[StatusLog]:
-        qs = super().get_queryset(request)
-        if request.user.is_superuser:
-            return qs
-        return qs.filter(created_by=request.user)
 
     def traceback(self, obj):
         return format_html(
@@ -133,17 +127,6 @@ class AccountAdmin(admin.ModelAdmin):
     fields = ('id', 'name', 'exchange', 'api_key', 'api_secret', 'api_passphrase', 'testnet')
     list_display_links = ('id', 'name')
     readonly_fields = ('id',)
-
-    def get_queryset(self, request) -> QuerySet:
-        qs = super().get_queryset(request)
-        if request.user.is_superuser:
-            return qs
-        return qs.filter(created_by=request.user)
-
-    def save_model(self, request, obj, form, change):
-        if not obj.pk:
-            obj.created_by = request.user
-        super().save_model(request, obj, form, change)
 
 
 @admin.register(Symbol)
@@ -263,17 +246,6 @@ class StrategyAdmin(admin.ModelAdmin):
     actions = ['toggle_enabled']
     change_list_template = 'admin/strategy_change_list.html'
 
-    def get_queryset(self, request) -> QuerySet:
-        qs = super().get_queryset(request)
-        if request.user.is_superuser:
-            return qs
-        return qs.filter(created_by=request.user)
-
-    def save_model(self, request, obj: Strategy, form: StrategyForm, change):
-        if not obj.pk:
-            obj.created_by = request.user
-        super().save_model(request, obj, form, change)
-
     @admin.display(description='Symbols')
     def _symbols(self, obj) -> str:
         return ', '.join(obj.symbols.values_list('symbol', flat=True))
@@ -302,17 +274,17 @@ class StrategyAdmin(admin.ModelAdmin):
         csv_files = list(path.glob('*.csv'))
         if 'start_recording' in request.GET:
             cache.set('write_ask_bid_to_csv', True)
-            logger.info('Recording started', extra={'created_by': request.user})
+            logger.info('Recording started')
             return redirect(reverse('admin:csv_list'))
         elif 'stop_recording' in request.GET:
             cache.set('write_ask_bid_to_csv', False)
-            logger.info('Recording stopped', extra={'created_by': request.user})
+            logger.info('Recording stopped')
             return redirect(reverse('admin:csv_list'))
         elif 'delete_all' in request.GET:
             for file in csv_files:
                 if file.is_file():
                     file.unlink()
-                    logger.info(f'File {file} deleted', extra={'created_by': request.user})
+                    logger.info(f'File {file} deleted')
             return redirect(reverse('admin:csv_list'))
         elif 'filename' in kwargs:
             filename = kwargs['filename']
@@ -645,6 +617,7 @@ class OrderAdmin(admin.ModelAdmin):
     list_display_links = ('order_id', 'account')
     ordering = ('-order_id',)
     list_per_page = 500
+    actions = ['delete_all']
 
     # def has_delete_permission(self, request, obj=None):
     #     return False
@@ -654,6 +627,11 @@ class OrderAdmin(admin.ModelAdmin):
 
     def has_change_permission(self, request, obj=None):
         return False
+
+    @admin.action(description='Delete all')
+    def delete_all(self, request, queryset):
+        Order.objects.all().delete()
+        self.message_user(request, 'All orders deleted')
 
     @admin.display(description='Data')
     def _data(self, obj) -> str:

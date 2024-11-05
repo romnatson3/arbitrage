@@ -4,17 +4,17 @@ volumes:
   exchange_static:
   exchange_rabbitmq:
   exchange_csv:
-  exchange_web_logs:
-  exchange_default_logs:
-  exchange_check_condition_logs:
-  exchange_positions_logs:
-  exchange_market_logs:
-  exchange_websocket_okx_orders_logs:
-  exchange_websocket_okx_positions_logs:
-  exchange_websocket_okx_ask_bid_logs:
-  exchange_websocket_okx_last_price_logs:
-  exchange_websocket_okx_market_price_logs:
-  exchange_websocket_binance_ask_bid_logs:
+  exchange_logs_web:
+  exchange_logs_default:
+  exchange_logs_check_condition:
+  exchange_logs_positions:
+  exchange_logs_market:
+  exchange_logs_websocket_okx_orders:
+  exchange_logs_websocket_okx_positions:
+  exchange_logs_websocket_okx_ask_bid:
+  exchange_logs_websocket_okx_last_price:
+  exchange_logs_websocket_okx_market_price:
+  exchange_logs_websocket_binance_ask_bid:
 
 networks:
   layer:
@@ -34,7 +34,7 @@ services:
     volumes:
       - exchange_static:/app/static
       - exchange_csv:/opt/csv
-      - exchange_web_logs:/app/logs
+      - exchange_logs_web:/app/logs
     networks:
       - layer
     env_file:
@@ -135,7 +135,7 @@ services:
       replicas: 1
     restart: always
     volumes:
-      - exchange_default_logs:/app/logs
+      - exchange_logs_default:/app/logs
     depends_on:
       - rabbitmq
       - redis
@@ -154,7 +154,7 @@ services:
       replicas: 1
     restart: always
     volumes:
-      - exchange_check_condition_logs:/app/logs
+      - exchange_logs_check_condition:/app/logs
     depends_on:
       - rabbitmq
       - redis
@@ -173,7 +173,7 @@ services:
       replicas: 1
     restart: always
     volumes:
-      - exchange_positions_logs:/app/logs
+      - exchange_logs_positions:/app/logs
     depends_on:
       - rabbitmq
       - redis
@@ -192,7 +192,7 @@ services:
       replicas: 1
     restart: always
     volumes:
-      - exchange_market_logs:/app/logs
+      - exchange_logs_market:/app/logs
     depends_on:
       - rabbitmq
       - redis
@@ -211,7 +211,7 @@ services:
       replicas: 1
     restart: always
     volumes:
-      - exchange_websocket_okx_orders_logs:/app/logs
+      - exchange_logs_websocket_okx_orders:/app/logs
     depends_on:
       - rabbitmq
       - redis
@@ -230,7 +230,7 @@ services:
       replicas: 1
     restart: always
     volumes:
-      - exchange_websocket_okx_last_price_logs:/app/logs
+      - exchange_logs_websocket_okx_last_price:/app/logs
     depends_on:
       - rabbitmq
       - redis
@@ -249,7 +249,7 @@ services:
       replicas: 1
     restart: always
     volumes:
-      - exchange_websocket_okx_ask_bid_logs:/app/logs
+      - exchange_logs_websocket_okx_ask_bid:/app/logs
     depends_on:
       - rabbitmq
       - redis
@@ -276,7 +276,7 @@ services:
       - .env
     volumes:
       - exchange_csv:/opt/csv
-      - exchange_websocket_binance_ask_bid_logs:/app/logs
+      - exchange_logs_websocket_binance_ask_bid:/app/logs
     networks:
       - layer
 
@@ -288,7 +288,7 @@ services:
       replicas: 1
     restart: always
     volumes:
-      - exchange_websocket_okx_market_price_logs:/app/logs
+      - exchange_logs_websocket_okx_market_price:/app/logs
     depends_on:
       - rabbitmq
       - redis
@@ -307,7 +307,7 @@ services:
       replicas: 1
     restart: always
     volumes:
-      - exchange_websocket_okx_positions_logs:/app/logs
+      - exchange_logs_websocket_okx_positions:/app/logs
     depends_on:
       - rabbitmq
       - redis

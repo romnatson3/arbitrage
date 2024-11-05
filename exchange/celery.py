@@ -109,7 +109,6 @@ class TaskFormatter(CeleryTaskFormatter):
             record.__dict__.update(short_task_id=short_task_id)
         else:
             record.__dict__.setdefault('short_task_id', '--------')
-        record.__dict__.setdefault('created_by', '----')
         record.__dict__.setdefault('strategy', '----------')
         record.__dict__.setdefault('symbol', '---------------')
         record.__dict__.setdefault('position', '-----')
@@ -137,7 +136,7 @@ def setup_task_logger(logger, *args, **kwargs):
     for handler in logger.handlers:
         tf = TaskFormatter(
             '[%(asctime)s.%(msecs)03d] %(short_task_id)s %(levelname)-7s '
-            '%(created_by).4s %(strategy).10s %(symbol)s %(position)-6s %(message)s',
+            '%(strategy).10s %(symbol)s %(position)-6s %(message)s',
         )
         # tf.datefmt = '%d-%m-%Y %H:%M:%S'
         handler.setFormatter(tf)
