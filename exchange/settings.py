@@ -237,7 +237,7 @@ LOGGING = {
             'level': 'TRACE',
             'filename': logs_dir / 'arbitrage.log',
             'maxBytes': 1024 * 1024 * 500,  # 500 MB
-            'backupCount': 10,
+            'backupCount': 5,
             'formatter': 'custom',
             'encoding': 'utf-8',
             'mode': 'a'

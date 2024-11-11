@@ -88,18 +88,18 @@ services:
     networks:
       - layer
 
-  flower:
-    image: exchange:latest
-    entrypoint: /app/wait-for-it.sh -q -s -h rabbitmq -p 5672 -- celery -A exchange flower -l INFO --host=0.0.0.0 --port=5555
-    restart: always
-    env_file:
-      - .env
-    ports:
-      - "51455:5555"
-    depends_on:
-      - rabbitmq
-    networks:
-      - layer
+  # flower:
+  #   image: exchange:latest
+  #   entrypoint: /app/wait-for-it.sh -q -s -h rabbitmq -p 5672 -- celery -A exchange flower -l INFO --host=0.0.0.0 --port=5555
+  #   restart: always
+  #   env_file:
+  #     - .env
+  #   ports:
+  #     - "51455:5555"
+  #   depends_on:
+  #     - rabbitmq
+  #   networks:
+  #     - layer
 
   beat:
     image: exchange:latest

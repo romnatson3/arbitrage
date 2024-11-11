@@ -3,6 +3,7 @@ import csv
 import pathlib
 from types import SimpleNamespace as Namespace
 from django.contrib import admin
+from django.contrib.admin.sites import AdminSite
 from django.utils import timezone
 from django.utils.html import format_html
 from django.contrib.auth.admin import UserAdmin as BaseUserAdmin
@@ -32,6 +33,25 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 
+class CustomAdminSite(AdminSite):
+    def get_app_list(self, request):
+        app_list = super().get_app_list(request)
+        filtered_app_list = []
+        for app in app_list:
+            if app['app_label'] == 'binance_okx':
+                app['models'] = [
+                    model for model in app['models']
+                    if model['object_name'] not in ['Order', 'Bill']
+                ]
+                if app['models']:
+                    filtered_app_list.append(app)
+            else:
+                filtered_app_list.append(app)
+        return filtered_app_list
+
+
+admin.site = CustomAdminSite()
+admin.sites.site = admin.site
 admin.site.site_header = 'Binance-OKX'
 admin.site.site_title = 'Binance-OKX'
 admin.site.index_title = 'Binance-OKX'
