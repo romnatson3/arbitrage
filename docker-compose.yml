@@ -42,11 +42,8 @@ services:
     depends_on:
       - postgres
       - redis
-    # logging:
-    #   driver: syslog
-    #   options:
-    #     tag: exchange_web
-    #     syslog-facility: local5
+    logging:
+      driver: 'none'
 
   rabbitmq:
     image: rabbitmq:management
@@ -69,6 +66,11 @@ services:
       - web
     networks:
       - layer
+    logging:
+      driver: syslog
+      options:
+        tag: exchange_nginx
+        syslog-facility: local5
 
   postgres:
     image: postgres:latest
@@ -79,6 +81,11 @@ services:
       - exchange_postgres:/var/lib/postgresql/data
     networks:
       - layer
+    logging:
+      driver: syslog
+      options:
+        tag: exchange_postgres
+        syslog-facility: local5
 
   redis:
     image: redis:latest
@@ -126,6 +133,8 @@ services:
       - .env
     networks:
       - layer
+    logging:
+      driver: 'none'
 
   default:
     image: exchange:latest
@@ -145,6 +154,8 @@ services:
       - .env
     networks:
       - layer
+    logging:
+      driver: 'none'
 
   check_condition:
     image: exchange:latest
@@ -164,6 +175,8 @@ services:
       - .env
     networks:
       - layer
+    logging:
+      driver: 'none'
 
   positions:
     image: exchange:latest
@@ -183,6 +196,8 @@ services:
       - .env
     networks:
       - layer
+    logging:
+      driver: 'none'
 
   market:
     image: exchange:latest
@@ -202,6 +217,8 @@ services:
       - .env
     networks:
       - layer
+    logging:
+      driver: 'none'
 
   websocket_okx_orders:
     image: exchange:latest
@@ -221,6 +238,8 @@ services:
       - .env
     networks:
       - layer
+    logging:
+      driver: 'none'
 
   websocket_okx_last_price:
     image: exchange:latest
@@ -240,6 +259,8 @@ services:
       - .env
     networks:
       - layer
+    logging:
+      driver: 'none'
 
   websocket_okx_ask_bid:
     image: exchange:latest
@@ -259,6 +280,8 @@ services:
       - .env
     networks:
       - layer
+    logging:
+      driver: 'none'
 
   websocket_binance_ask_bid:
     image: exchange:latest
@@ -279,6 +302,8 @@ services:
       - exchange_logs_websocket_binance_ask_bid:/app/logs
     networks:
       - layer
+    logging:
+      driver: 'none'
 
   websocket_okx_market_price:
     image: exchange:latest
@@ -298,6 +323,8 @@ services:
       - .env
     networks:
       - layer
+    logging:
+      driver: 'none'
 
   websocket_okx_positions:
     image: exchange:latest
@@ -317,3 +344,5 @@ services:
       - .env
     networks:
       - layer
+    logging:
+      driver: 'none'
