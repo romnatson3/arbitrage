@@ -50,8 +50,8 @@ class CustomAdminSite(AdminSite):
         return filtered_app_list
 
 
-admin.site = CustomAdminSite()
-admin.sites.site = admin.site
+# admin.site = CustomAdminSite()
+# admin.sites.site = admin.site
 admin.site.site_header = 'Binance-OKX'
 admin.site.site_title = 'Binance-OKX'
 admin.site.index_title = 'Binance-OKX'
