@@ -224,14 +224,14 @@ class StrategyAdmin(admin.ModelAdmin):
         js = ('binance_okx/js/strategy.js',)
 
     list_display = (
-        'id', 'name', 'enabled', 'mode', '_account', 'position_size',
+        'id', 'name', 'enabled', 'mode', 'reverse', '_account', 'position_size',
         'close_position_type', 'close_position_parts', '_symbols', 'updated_at'
     )
     search_fields = ('name',)
     list_filter = ()
     fieldsets = (
         (None, {'fields': (
-            'id', 'name', 'enabled', 'mode', 'search_duration',
+            'id', 'name', 'enabled', 'reverse', 'mode', 'search_duration',
             'simultaneous_opening_positions', 'second_account'
         )}),
         # (None, {'fields': (('first_account', 'second_account'),)}),

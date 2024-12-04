@@ -379,6 +379,15 @@ def check_condition(self, data: dict) -> None:
                                 'Main lock acquired after condition met',
                                 extra=strategy.extra_log
                             )
+                            if strategy.reverse:
+                                logger.warning(
+                                    f'Reverse is enabled, reversing "{position_side}"',
+                                    extra=strategy.extra_log
+                                )
+                                if position_side == 'long':
+                                    position_side = 'short'
+                                elif position_side == 'short':
+                                    position_side = 'long'
                             open_or_increase_position.delay(
                                 strategy.id, symbol.symbol, position_side, prices
                             )

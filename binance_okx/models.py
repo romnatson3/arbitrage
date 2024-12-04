@@ -273,6 +273,7 @@ class Strategy(BaseModel):
     mode = models.CharField('Mode', choices=Mode.choices, default=Mode.trade, help_text='Algorithm mode')
     search_duration = models.IntegerField('Search duration', default=0, help_text='Search duration, milliseconds')
     simultaneous_opening_positions = models.BooleanField('Simultaneous opening of positions', default=False)
+    reverse = models.BooleanField('Reverse', default=False, help_text='Open positions in reverse direction')
 
     def _create_task(self) -> PeriodicTask:
         task_name = f'strategy_{self.id}'
