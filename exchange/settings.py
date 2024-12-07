@@ -233,14 +233,12 @@ LOGGING = {
             'level': 'INFO',
         },
         'file': {
-            'class': 'logging.handlers.RotatingFileHandler',
+            'class': 'logging.handlers.WatchedFileHandler',
             'level': 'TRACE',
-            'filename': logs_dir / 'arbitrage.log',
-            'maxBytes': 1024 * 1024 * 500,  # 500 MB
-            'backupCount': 5,
             'formatter': 'custom',
-            'encoding': 'utf-8',
-            'mode': 'a'
+            'filename': logs_dir / 'arbitrage.log',
+            'mode': 'a',
+            'encoding': 'utf-8'
         },
     },
     'loggers': {
