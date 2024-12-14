@@ -13,7 +13,7 @@ import base64
 import hmac
 from typing import Callable
 from django.conf import settings
-from binance_okx.models import Strategy, Account
+from binance_okx.models import Account
 from binance_okx.helper import get_current_date_time
 
 
@@ -27,8 +27,11 @@ class SingletonMeta(type):
 
     def __call__(cls, *args, **kwargs):
         account = kwargs.get('account')
+        symbol = kwargs.get('symbol')
         if account:
             id = account.id
+        elif symbol:
+            id = symbol
         else:
             id = 0
         if id not in cls._instances:
@@ -39,6 +42,7 @@ class SingletonMeta(type):
 
 class WebSocketOkxAskBid(metaclass=SingletonMeta):
     def __init__(self, *args, **kwargs) -> None:
+        self.symbol = kwargs.get('symbol')
         websocket.enableTrace(kwargs.get('trace', False))
         self.is_run = False
         self.ws = websocket.WebSocket()
@@ -47,73 +51,42 @@ class WebSocketOkxAskBid(metaclass=SingletonMeta):
         else:
             self.url = 'wss://wspap.okx.com:8443/ws/v5/public'  # Testnet
         self.handlers = []
-        self.subscribed_inst_ids = []
-        self._inst_id_field_path = 'symbols__okx__data__instId'
         self._previous_ask_bid: dict[str, list[float]] = {}
-        self.methods_names = ['run_forever', 'ping', 'monitoring_inst_ids']
-        self.name = self.__class__.__name__
+        self.methods_names = ['run_forever', 'ping']
+        self.name = f'{self.__class__.__name__}_{self.symbol}'
         self.threads = {}
         self._initialized = True
-        self.extra = {'symbol': self.name}
+        self.extra = {'position': self.name, 'symbol': self.symbol}
 
-    def monitoring_inst_ids(self) -> None:
-        while self.is_run:
-            try:
-                if not self.ws.connected:
-                    logger.debug(
-                        'Monitoring not started. Socket is not connected',
-                        extra=self.extra
-                    )
-                    continue
-                strategy_inst_ids = set(
-                    Strategy.objects.filter(enabled=True)
-                    .values_list(self._inst_id_field_path, flat=True).distinct()
-                )
-                subscribed_inst_ids = set(self.subscribed_inst_ids)
-                new_inst_ids = strategy_inst_ids - subscribed_inst_ids
-                if new_inst_ids:
-                    logger.info(f'Found unregistered {new_inst_ids=}', extra=self.extra)
-                    self.subscribe_inst_id(new_inst_ids)
-                unusing_inst_ids = subscribed_inst_ids - strategy_inst_ids
-                if unusing_inst_ids:
-                    logger.info(f'Fount unusing {unusing_inst_ids=}', extra=self.extra)
-                    self.unsubscribe_inst_id(unusing_inst_ids)
-            except Exception as e:
-                logger.error(f'Monitoring error: {e}', extra=self.extra)
-                continue
-            finally:
-                time.sleep(15)
+    def subscribe_inst_id(self, inst_id: str):
+        start_time = time.time()
+        while time.time() - start_time < 5:
+            if self.ws.connected:
+                break
+            time.sleep(1)
         else:
-            logger.debug('Monitoring stopped', extra=self.extra)
+            logger.error('Not subscribe. Connection is not established', extra=self.extra)
+            return
+        d = {
+            'op': 'subscribe',
+            'args': [{
+                'channel': 'tickers',
+                'instId': inst_id
+            }]
+        }
+        self.ws.send(json.dumps(d))
+        logger.info(f'Subscribed to {inst_id=}', extra=self.extra)
 
-    def subscribe_inst_id(self, inst_ids: list[str]) -> dict:
-        for inst_id in inst_ids:
-            d = {
-                'op': 'subscribe',
-                'args': [{
-                    'channel': 'tickers',
-                    'instId': inst_id
-                }]
-            }
-            self.ws.send(json.dumps(d))
-            time.sleep(0.2)
-            self.subscribed_inst_ids.append(inst_id)
-            logger.info(f'Subscribed to {inst_id=}', extra=self.extra)
-
-    def unsubscribe_inst_id(self, inst_ids: list[str]) -> dict:
-        for inst_id in inst_ids:
-            d = {
-                'op': 'unsubscribe',
-                'args': [{
-                    'channel': 'tickers',
-                    'instId': inst_id
-                }]
-            }
-            self.ws.send(json.dumps(d))
-            time.sleep(0.2)
-            if inst_id in self.subscribed_inst_ids:
-                self.subscribed_inst_ids.remove(inst_id)
-            logger.info(f'Unsubscribed from {inst_id=}', extra=self.extra)
+    def unsubscribe_inst_id(self, inst_id: str):
+        d = {
+            'op': 'unsubscribe',
+            'args': [{
+                'channel': 'tickers',
+                'instId': inst_id
+            }]
+        }
+        self.ws.send(json.dumps(d))
+        logger.info(f'Unsubscribed from {inst_id=}', extra=self.extra)
 
     def _connect(self):
         self.ws.connect(self.url)
@@ -136,7 +109,11 @@ class WebSocketOkxAskBid(metaclass=SingletonMeta):
                 logger.error(f'Ping error: {e}', extra=self.extra)
                 continue
             finally:
-                time.sleep(25)
+                start_time = time.time()
+                while time.time() - start_time < 25:
+                    if not self.is_run:
+                        return
+                    time.sleep(1)
         else:
             logger.debug('Ping stopped', extra=self.extra)
 
@@ -173,7 +150,8 @@ class WebSocketOkxAskBid(metaclass=SingletonMeta):
 
     def init(self):
         self._connect()
-        self.subscribed_inst_ids = []
+        if hasattr(self, 'symbol') and self.symbol is not None:
+            self.subscribe_inst_id(self.symbol)
 
     def run_forever(self) -> None:
         while self.is_run:
@@ -283,34 +261,27 @@ class WebSocketOkxMarketPrice(WebSocketOkxAskBid):
         super().__init__(self, *args, **kwargs)
         self._previous_market_price: dict[str, float] = {}
 
-    def subscribe_inst_id(self, inst_ids: list[str]) -> dict:
-        for inst_id in inst_ids:
-            d = {
-                'op': 'subscribe',
-                'args': [{
-                    'channel': 'mark-price',
-                    'instId': inst_id
-                }]
-            }
-            self.ws.send(json.dumps(d))
-            time.sleep(0.2)
-            self.subscribed_inst_ids.append(inst_id)
-            logger.info(f'Subscribed to {inst_id=}', extra=self.extra)
+    def subscribe_inst_id(self, inst_id: str):
+        d = {
+            'op': 'subscribe',
+            'args': [{
+                'channel': 'mark-price',
+                'instId': inst_id
+            }]
+        }
+        self.ws.send(json.dumps(d))
+        logger.info(f'Subscribed to {inst_id=}', extra=self.extra)
 
-    def unsubscribe_inst_id(self, inst_ids: list[str]) -> dict:
-        for inst_id in inst_ids:
-            d = {
-                'op': 'unsubscribe',
-                'args': [{
-                    'channel': 'mark-price',
-                    'instId': inst_id
-                }]
-            }
-            self.ws.send(json.dumps(d))
-            time.sleep(0.2)
-            if inst_id in self.subscribed_inst_ids:
-                self.subscribed_inst_ids.remove(inst_id)
-            logger.info(f'Unsubscribed from {inst_id=}', extra=self.extra)
+    def unsubscribe_inst_id(self, inst_id: str):
+        d = {
+            'op': 'unsubscribe',
+            'args': [{
+                'channel': 'mark-price',
+                'instId': inst_id
+            }]
+        }
+        self.ws.send(json.dumps(d))
+        logger.info(f'Unsubscribed from {inst_id=}', extra=self.extra)
 
     def _post_message_handler(self, data: dict) -> None | dict:
         previous_market_price = self._previous_market_price.get(data['instId'])
@@ -327,34 +298,34 @@ class WebSocketOkxMarketPrice(WebSocketOkxAskBid):
 class WebSocketBinaceAskBid(WebSocketOkxAskBid):
     def __init__(self, *args, **kwargs) -> None:
         super().__init__(self, *args, **kwargs)
-        self.methods_names = ['run_forever', 'monitoring_inst_ids']
+        self.methods_names = ['run_forever']
         self.url = 'wss://fstream.binance.com/ws'
-        self._inst_id_field_path = 'symbols__symbol'
 
-    def subscribe_inst_id(self, inst_ids: list[str]) -> dict:
-        for inst_id in inst_ids:
-            d = {
-                'method': 'SUBSCRIBE',
-                'params': [f'{inst_id.lower()}@bookTicker'],
-                'id': 1
-            }
-            self.ws.send(json.dumps(d))
-            time.sleep(0.2)
-            self.subscribed_inst_ids.append(inst_id)
-            logger.info(f'Subscribed to {inst_id=}', extra=self.extra)
+    def subscribe_inst_id(self, inst_id: str) -> None:
+        start_time = time.time()
+        while time.time() - start_time < 5:
+            if self.ws.connected:
+                break
+            time.sleep(1)
+        else:
+            logger.error('Not subscribe. Connection is not established', extra=self.extra)
+            return
+        d = {
+            'method': 'SUBSCRIBE',
+            'params': [f'{inst_id.lower()}@bookTicker'],
+            'id': 1
+        }
+        self.ws.send(json.dumps(d))
+        logger.info(f'Subscribed to {inst_id=}', extra=self.extra)
 
-    def unsubscribe_inst_id(self, inst_ids: list[str]) -> dict:
-        for inst_id in inst_ids:
-            d = {
-                'method': 'UNSUBSCRIBE',
-                'params': [f'{inst_id.lower()}@bookTicker'],
-                'id': 1
-            }
-            self.ws.send(json.dumps(d))
-            time.sleep(0.2)
-            if inst_id in self.subscribed_inst_ids:
-                self.subscribed_inst_ids.remove(inst_id)
-            logger.info(f'Unsubscribed from {inst_id=}', extra=self.extra)
+    def unsubscribe_inst_id(self, inst_id: str) -> None:
+        d = {
+            'method': 'UNSUBSCRIBE',
+            'params': [f'{inst_id.lower()}@bookTicker'],
+            'id': 1
+        }
+        self.ws.send(json.dumps(d))
+        logger.info(f'Unsubscribed from {inst_id=}', extra=self.extra)
 
     def _message_handler(self, message: str) -> None | dict:
         try:
@@ -386,7 +357,6 @@ class WebSocketOkxOrders(WebSocketOkxAskBid):
             self.url = 'wss://ws.okx.com:8443/ws/v5/private'  # Production
         else:
             self.url = 'wss://wspap.okx.com:8443/ws/v5/private?brokerId=9999'  # Testnet
-        self.methods_names = ['run_forever', 'ping']
         self.account: Account = kwargs['account']
         self.name = self.__class__.__name__ + f'_{self.account.id}'
 

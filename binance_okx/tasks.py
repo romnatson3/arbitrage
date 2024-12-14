@@ -453,13 +453,32 @@ def run_websocket_okx_orders() -> None:
 def run_websocket_okx_last_price() -> None:
     try:
         with TaskLock('task_run_websocket_okx_last_price'):
-            ws = WebSocketOkxLastPrice()
-            if ws.is_alive():
-                logger.debug('Alive and running', extra={'symbol': ws.name})
-            else:
+            subscribed_inst_ids = set(
+                cache.get('okx_last_price_subscribed_inst_ids', [])
+            )
+            strategy_inst_ids = set(
+                Strategy.objects.filter(enabled=True)
+                .values_list('symbols__okx__data__instId', flat=True)
+                .distinct()
+            )
+            unusing_inst_ids = subscribed_inst_ids - strategy_inst_ids
+            for inst_id in unusing_inst_ids:
+                ws = WebSocketOkxMarketPrice(symbol=inst_id)
                 ws.kill()
-                ws.start()
-                ws.add_handler(lambda data: closing_position_by_limit.delay(data))
+            for inst_id in strategy_inst_ids:
+                try:
+                    ws = WebSocketOkxLastPrice(symbol=inst_id)
+                    if ws.is_alive():
+                        logger.debug('Alive and running', extra={'symbol': ws.name})
+                    else:
+                        ws.kill()
+                        ws.start()
+                        ws.add_handler(lambda data: closing_position_by_limit.delay(data))
+                except Exception as e:
+                    logger.critical(e)
+                finally:
+                    time.sleep(0.5)
+            cache.set('okx_last_price_subscribed_inst_ids', list(strategy_inst_ids))
     except AcquireLockException:
         logger.debug('Task run_websocket_okx_last_price is currently running')
     except Exception as e:
@@ -471,13 +490,33 @@ def run_websocket_okx_last_price() -> None:
 def run_websocket_okx_market_price() -> None:
     try:
         with TaskLock('task_run_websocket_okx_market_price'):
-            ws = WebSocketOkxMarketPrice()
-            if ws.is_alive():
-                logger.debug('Alive and running', extra={'symbol': ws.name})
-            else:
+            subscribed_inst_ids = set(
+                cache.get('okx_market_price_subscribed_inst_ids', [])
+            )
+            strategy_inst_ids = set(
+                Strategy.objects.filter(enabled=True)
+                .values_list('symbols__okx__data__instId', flat=True)
+                .distinct()
+            )
+            unusing_inst_ids = subscribed_inst_ids - strategy_inst_ids
+            for inst_id in unusing_inst_ids:
+                ws = WebSocketOkxMarketPrice(symbol=inst_id)
                 ws.kill()
-                ws.start()
-                ws.add_handler(save_okx_market_price_to_cache)
+            for inst_id in strategy_inst_ids:
+                try:
+                    ws = WebSocketOkxMarketPrice(symbol=inst_id)
+                    extra = {'symbol': ws.symbol, 'position': ws.name}
+                    if ws.is_alive():
+                        logger.debug('Alive and running', extra=extra)
+                    else:
+                        ws.kill()
+                        ws.start()
+                        ws.add_handler(save_okx_market_price_to_cache)
+                except Exception as e:
+                    logger.critical(e, extra=extra)
+                finally:
+                    time.sleep(0.5)
+            cache.set('okx_market_price_subscribed_inst_ids', list(strategy_inst_ids))
     except AcquireLockException:
         logger.debug('Task run_websocket_okx_market_price is currently running')
     except Exception as e:
@@ -489,14 +528,34 @@ def run_websocket_okx_market_price() -> None:
 def run_websocket_okx_ask_bid() -> None:
     try:
         with TaskLock('task_run_websocket_okx_ask_bid'):
-            ws = WebSocketOkxAskBid()
-            if ws.is_alive():
-                logger.debug('Alive and running', extra={'symbol': ws.name})
-            else:
+            subscribed_inst_ids = set(
+                cache.get('okx_ask_bid_subscribed_inst_ids', [])
+            )
+            strategy_inst_ids = set(
+                Strategy.objects.filter(enabled=True)
+                .values_list('symbols__okx__data__instId', flat=True)
+                .distinct()
+            )
+            unusing_inst_ids = subscribed_inst_ids - strategy_inst_ids
+            for inst_id in unusing_inst_ids:
+                ws = WebSocketOkxAskBid(symbol=inst_id)
                 ws.kill()
-                ws.start()
-                ws.add_handler(save_okx_ask_bid_to_cache)
-                ws.add_handler(closing_position_by_market)
+            for inst_id in strategy_inst_ids:
+                try:
+                    ws = WebSocketOkxAskBid(symbol=inst_id)
+                    extra = {'symbol': ws.symbol, 'position': ws.name}
+                    if ws.is_alive():
+                        logger.debug('Alive and running', extra=extra)
+                    else:
+                        ws.kill()
+                        ws.start()
+                        ws.add_handler(save_okx_ask_bid_to_cache)
+                        ws.add_handler(closing_position_by_market)
+                except Exception as e:
+                    logger.critical(e, extra=extra)
+                finally:
+                    time.sleep(0.5)
+            cache.set('okx_ask_bid_subscribed_inst_ids', list(strategy_inst_ids))
     except AcquireLockException:
         logger.debug('Task run_websocket_okx_ask_bid is currently running')
     except Exception as e:
@@ -508,14 +567,34 @@ def run_websocket_okx_ask_bid() -> None:
 def run_websocket_binance_ask_bid() -> None:
     try:
         with TaskLock('task_run_websocket_binance_ask_bid'):
-            ws = WebSocketBinaceAskBid()
-            if ws.is_alive():
-                logger.debug('Alive and running', extra={'symbol': ws.name})
-            else:
+            subscribed_inst_ids = set(
+                cache.get('binance_ask_bid_subscribed_inst_ids', [])
+            )
+            strategy_inst_ids = set(
+                Strategy.objects.filter(enabled=True)
+                .values_list('symbols__symbol', flat=True)
+                .distinct()
+            )
+            unusing_inst_ids = subscribed_inst_ids - strategy_inst_ids
+            for inst_id in unusing_inst_ids:
+                ws = WebSocketBinaceAskBid(symbol=inst_id)
                 ws.kill()
-                ws.start()
-                ws.add_handler(write_ask_bid_to_csv_and_cache_by_symbol)
-                ws.add_handler(lambda data: check_condition.delay(data))
+            for inst_id in strategy_inst_ids:
+                try:
+                    ws = WebSocketBinaceAskBid(symbol=inst_id)
+                    extra = {'symbol': ws.symbol, 'position': ws.name}
+                    if ws.is_alive():
+                        logger.debug('Alive and running', extra=extra)
+                    else:
+                        ws.kill()
+                        ws.start()
+                        ws.add_handler(write_ask_bid_to_csv_and_cache_by_symbol)
+                        ws.add_handler(lambda data: check_condition.delay(data))
+                except Exception as e:
+                    logger.critical(e, extra=extra)
+                finally:
+                    time.sleep(0.5)
+            cache.set('binance_ask_bid_subscribed_inst_ids', list(strategy_inst_ids))
     except AcquireLockException:
         logger.debug('Task run_websocket_binance_ask_bid is currently running')
     except Exception as e:

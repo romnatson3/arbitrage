@@ -1,7 +1,6 @@
 from __future__ import absolute_import, unicode_literals
 import logging
 import os
-import re
 from celery import Celery
 from celery.app.log import TaskFormatter as CeleryTaskFormatter
 from celery.signals import after_setup_task_logger, after_setup_logger
